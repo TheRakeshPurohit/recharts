@@ -1,5 +1,8 @@
-import classNames from 'classnames';
-import _ from 'lodash';
+import isNan from 'lodash/isNaN';
+import isFunction from 'lodash/isFunction';
+import omit from 'lodash/omit';
+import get from 'lodash/get';
+import clsx from 'clsx';
 /**
  * @fileOverview TreemapChart
  */
@@ -17,7 +20,7 @@ import { uniqueId } from '../util/DataUtils';
 import { getStringSize } from '../util/DOMUtils';
 import { Global } from '../util/Global';
 import { filterSvgElements, findChildByType, validateWidthHeight, filterProps } from '../util/ReactUtils';
-import { DataKey, TreemapNode } from '../util/types';
+import { AnimationDuration, AnimationTiming, DataKey, TreemapNode } from '../util/types';
 
 const NODE_VALUE_KEY = 'value';
 
@@ -46,7 +49,7 @@ const computeNode = ({
     nodeValue = computedChildren.reduce((result: any, child: TreemapNode) => result + child[NODE_VALUE_KEY], 0);
   } else {
     // TODO need to verify valueKey
-    nodeValue = _.isNaN(node[valueKey as string]) || node[valueKey as string] <= 0 ? 0 : node[valueKey as string];
+    nodeValue = isNan(node[valueKey as string]) || node[valueKey as string] <= 0 ? 0 : node[valueKey as string];
   }
 
   return {
@@ -69,7 +72,7 @@ const getAreaOfChildren = (children: TreemapNode[], areaValueRatio: number) => {
 
     return {
       ...child,
-      area: _.isNaN(area) || area <= 0 ? 0 : area,
+      area: isNan(area) || area <= 0 ? 0 : area,
     };
   });
 };
@@ -256,9 +259,9 @@ export interface Props {
 
   animationBegin?: number;
 
-  animationDuration?: number;
+  animationDuration?: AnimationDuration;
 
-  animationEasing?: 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'linear';
+  animationEasing?: AnimationTiming;
 }
 
 interface State {
@@ -354,6 +357,7 @@ export class Treemap extends PureComponent<Props, State> {
   }
 
   handleMouseEnter(node: TreemapNode, e: any) {
+    e.persist();
     const { onMouseEnter, children } = this.props;
     const tooltipItem = findChildByType(children, Tooltip);
 
@@ -375,6 +379,7 @@ export class Treemap extends PureComponent<Props, State> {
   }
 
   handleMouseLeave(node: TreemapNode, e: any) {
+    e.persist();
     const { onMouseLeave, children } = this.props;
     const tooltipItem = findChildByType(children, Tooltip);
 
@@ -399,7 +404,7 @@ export class Treemap extends PureComponent<Props, State> {
     const { onAnimationEnd } = this.props;
     this.setState({ isAnimationFinished: true });
 
-    if (_.isFunction(onAnimationEnd)) {
+    if (isFunction(onAnimationEnd)) {
       onAnimationEnd();
     }
   };
@@ -408,7 +413,7 @@ export class Treemap extends PureComponent<Props, State> {
     const { onAnimationStart } = this.props;
     this.setState({ isAnimationFinished: false });
 
-    if (_.isFunction(onAnimationStart)) {
+    if (isFunction(onAnimationStart)) {
       onAnimationStart();
     }
   };
@@ -563,7 +568,7 @@ export class Treemap extends PureComponent<Props, State> {
     if (React.isValidElement(content)) {
       return React.cloneElement(content, nodeProps);
     }
-    if (_.isFunction(content)) {
+    if (isFunction(content)) {
       return content(nodeProps);
     }
     // optimize default shape
@@ -596,7 +601,7 @@ export class Treemap extends PureComponent<Props, State> {
         <Rectangle
           fill={nodeProps.depth < 2 ? colors[index % colors.length] : 'rgba(255,255,255,0)'}
           stroke="#fff"
-          {..._.omit(nodeProps, 'children')}
+          {...omit(nodeProps, 'children')}
           role="img"
         />
         {arrow}
@@ -605,9 +610,9 @@ export class Treemap extends PureComponent<Props, State> {
     );
   }
 
-  renderNode(root: TreemapNode, node: TreemapNode, i: number): React.ReactElement {
+  renderNode(root: TreemapNode, node: TreemapNode): React.ReactElement {
     const { content, type } = this.props;
-    const nodeProps = { ...filterProps(this.props), ...node, root };
+    const nodeProps = { ...filterProps(this.props, false), ...node, root };
     const isLeaf = !node.children || !node.children.length;
 
     const { currentRoot } = this.state;
@@ -618,12 +623,15 @@ export class Treemap extends PureComponent<Props, State> {
     if (!isCurrentRootChild.length && root.depth && type === 'nest') {
       return null;
     }
+
     return (
-      // eslint-disable-next-line react/no-array-index-key
-      <Layer key={`recharts-treemap-node-${i}`} className={`recharts-treemap-depth-${node.depth}`}>
+      <Layer
+        key={`recharts-treemap-node-${nodeProps.x}-${nodeProps.y}-${nodeProps.name}`}
+        className={`recharts-treemap-depth-${node.depth}`}
+      >
         {this.renderItem(content, nodeProps, isLeaf)}
         {node.children && node.children.length
-          ? node.children.map((child: TreemapNode, index: number) => this.renderNode(node, child, index))
+          ? node.children.map((child: TreemapNode) => this.renderNode(node, child))
           : null}
       </Layer>
     );
@@ -636,7 +644,7 @@ export class Treemap extends PureComponent<Props, State> {
       return null;
     }
 
-    return this.renderNode(formatRoot, formatRoot, 0);
+    return this.renderNode(formatRoot, formatRoot);
   }
 
   renderTooltip(): React.ReactElement {
@@ -685,12 +693,12 @@ export class Treemap extends PureComponent<Props, State> {
       <div className="recharts-treemap-nest-index-wrapper" style={{ marginTop: '8px', textAlign: 'center' }}>
         {nestIndex.map((item: TreemapNode, i: number) => {
           // TODO need to verify nameKey type
-          const name = _.get(item, nameKey as string, 'root');
+          const name = get(item, nameKey as string, 'root');
           let content = null;
           if (React.isValidElement(nestIndexContent)) {
             content = React.cloneElement(nestIndexContent, item, i);
           }
-          if (_.isFunction(nestIndexContent)) {
+          if (isFunction(nestIndexContent)) {
             content = nestIndexContent(item, i);
           } else {
             content = name;
@@ -725,11 +733,11 @@ export class Treemap extends PureComponent<Props, State> {
     }
 
     const { width, height, className, style, children, type, ...others } = this.props;
-    const attrs = filterProps(others);
+    const attrs = filterProps(others, false);
 
     return (
       <div
-        className={classNames('recharts-wrapper', className)}
+        className={clsx('recharts-wrapper', className)}
         style={{ ...style, position: 'relative', cursor: 'default', width, height }}
         role="region"
       >

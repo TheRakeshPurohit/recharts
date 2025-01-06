@@ -1,10 +1,11 @@
 /**
  * @fileOverview Brush
  */
-import React, { PureComponent, Children, ReactText, ReactElement, TouchEvent, SVGProps } from 'react';
-import classNames from 'classnames';
+import React, { PureComponent, Children, ReactElement, TouchEvent, SVGProps } from 'react';
+import clsx from 'clsx';
 import { scalePoint, ScalePoint } from 'victory-vendor/d3-scale';
-import _ from 'lodash';
+import isFunction from 'lodash/isFunction';
+import range from 'lodash/range';
 import { Layer } from '../container/Layer';
 import { Text } from '../component/Text';
 import { getValueByDataKey } from '../util/ChartUtils';
@@ -30,6 +31,8 @@ interface InternalBrushProps {
 interface BrushProps extends InternalBrushProps {
   className?: string;
 
+  ariaLabel?: string;
+
   height: number;
   travellerWidth?: number;
   traveller?: BrushTravellerType;
@@ -39,11 +42,12 @@ interface BrushProps extends InternalBrushProps {
   dataKey?: DataKey<any>;
   startIndex?: number;
   endIndex?: number;
-  tickFormatter?: (value: any, index: number) => ReactText;
+  tickFormatter?: (value: any, index: number) => string | number;
 
   children?: ReactElement;
 
   onChange?: (newIndex: BrushStartEndIndex) => void;
+  onDragEnd?: (newIndex: BrushStartEndIndex) => void;
   leaveTimeOut?: number;
   alwaysShowText?: boolean;
 }
@@ -54,6 +58,7 @@ type BrushTravellerId = 'startX' | 'endX';
 
 interface State {
   isTravellerMoving?: boolean;
+  isTravellerFocused?: boolean;
   isSlideMoving?: boolean;
   startX?: number;
   endX?: number;
@@ -93,7 +98,7 @@ const createScale = ({
 
   const len = data.length;
   const scale = scalePoint<number>()
-    .domain(_.range(0, len))
+    .domain(range(0, len))
     .range([x, x + width - travellerWidth]);
   const scaleValues = scale.domain().map(entry => scale(entry));
 
@@ -101,6 +106,7 @@ const createScale = ({
     isTextActive: false,
     isSlideMoving: false,
     isTravellerMoving: false,
+    isTravellerFocused: false,
     startX: scale(startIndex),
     endX: scale(endIndex),
     scale,
@@ -161,7 +167,7 @@ export class Brush extends PureComponent<Props, State> {
 
     if (React.isValidElement(option)) {
       rectangle = React.cloneElement(option, props);
-    } else if (_.isFunction(option)) {
+    } else if (isFunction(option)) {
       rectangle = option(props);
     } else {
       rectangle = Brush.renderDefaultTraveller(props);
@@ -217,22 +223,22 @@ export class Brush extends PureComponent<Props, State> {
     this.detachDragEndListener();
   }
 
-  static getIndexInRange(range: number[], x: number) {
-    const len = range.length;
+  static getIndexInRange(valueRange: number[], x: number) {
+    const len = valueRange.length;
     let start = 0;
     let end = len - 1;
 
     while (end - start > 1) {
       const middle = Math.floor((start + end) / 2);
 
-      if (range[middle] > x) {
+      if (valueRange[middle] > x) {
         end = middle;
       } else {
         start = middle;
       }
     }
 
-    return x >= range[end] ? end : start;
+    return x >= valueRange[end] ? end : start;
   }
 
   getIndex({ startX, endX }: { startX: number; endX: number }) {
@@ -253,7 +259,7 @@ export class Brush extends PureComponent<Props, State> {
     const { data, tickFormatter, dataKey } = this.props;
     const text = getValueByDataKey(data[index], dataKey, index);
 
-    return _.isFunction(tickFormatter) ? tickFormatter(text, index) : text;
+    return isFunction(tickFormatter) ? tickFormatter(text, index) : text;
   }
 
   handleDrag = (e: React.Touch | React.MouseEvent<SVGGElement> | MouseEvent) => {
@@ -288,10 +294,19 @@ export class Brush extends PureComponent<Props, State> {
   }
 
   handleDragEnd = () => {
-    this.setState({
-      isTravellerMoving: false,
-      isSlideMoving: false,
-    });
+    this.setState(
+      {
+        isTravellerMoving: false,
+        isSlideMoving: false,
+      },
+      () => {
+        const { endIndex, onDragEnd, startIndex } = this.props;
+        onDragEnd?.({
+          endIndex,
+          startIndex,
+        });
+      },
+    );
     this.detachDragEndListener();
   };
 
@@ -410,6 +425,44 @@ export class Brush extends PureComponent<Props, State> {
     );
   }
 
+  handleTravellerMoveKeyboard(direction: 1 | -1, id: BrushTravellerId) {
+    // scaleValues are a list of coordinates. For example: [65, 250, 435, 620, 805, 990].
+    const { scaleValues, startX, endX } = this.state;
+    // currentScaleValue refers to which coordinate the current traveller should be placed at.
+    const currentScaleValue = this.state[id];
+
+    const currentIndex = scaleValues.indexOf(currentScaleValue);
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const newIndex = currentIndex + direction;
+    if (newIndex === -1 || newIndex >= scaleValues.length) {
+      return;
+    }
+
+    const newScaleValue = scaleValues[newIndex];
+
+    // Prevent travellers from being on top of each other or overlapping
+    if ((id === 'startX' && newScaleValue >= endX) || (id === 'endX' && newScaleValue <= startX)) {
+      return;
+    }
+
+    this.setState(
+      {
+        [id]: newScaleValue,
+      },
+      () => {
+        this.props.onChange(
+          this.getIndex({
+            startX: this.state.startX,
+            endX: this.state.endX,
+          }),
+        );
+      },
+    );
+  }
+
   renderBackground() {
     const { x, y, width, height, fill, stroke } = this.props;
 
@@ -436,23 +489,43 @@ export class Brush extends PureComponent<Props, State> {
   }
 
   renderTravellerLayer(travellerX: number, id: BrushTravellerId) {
-    const { y, travellerWidth, height, traveller } = this.props;
+    const { y, travellerWidth, height, traveller, ariaLabel, data, startIndex, endIndex } = this.props;
     const x = Math.max(travellerX, this.props.x);
     const travellerProps = {
-      ...filterProps(this.props),
+      ...filterProps(this.props, false),
       x,
       y,
       width: travellerWidth,
       height,
     };
 
+    const ariaLabelBrush = ariaLabel || `Min value: ${data[startIndex]?.name}, Max value: ${data[endIndex]?.name}`;
+
     return (
       <Layer
+        tabIndex={0}
+        role="slider"
+        aria-label={ariaLabelBrush}
+        aria-valuenow={travellerX}
         className="recharts-brush-traveller"
         onMouseEnter={this.handleEnterSlideOrTraveller}
         onMouseLeave={this.handleLeaveSlideOrTraveller}
         onMouseDown={this.travellerDragStartHandlers[id]}
         onTouchStart={this.travellerDragStartHandlers[id]}
+        onKeyDown={e => {
+          if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          this.handleTravellerMoveKeyboard(e.key === 'ArrowRight' ? 1 : -1, id);
+        }}
+        onFocus={() => {
+          this.setState({ isTravellerFocused: true });
+        }}
+        onBlur={() => {
+          this.setState({ isTravellerFocused: false });
+        }}
         style={{ cursor: 'col-resize' }}
       >
         {Brush.renderTraveller(traveller, travellerProps)}
@@ -519,7 +592,7 @@ export class Brush extends PureComponent<Props, State> {
 
   render() {
     const { data, className, children, x, y, width, height, alwaysShowText } = this.props;
-    const { startX, endX, isTextActive, isSlideMoving, isTravellerMoving } = this.state;
+    const { startX, endX, isTextActive, isSlideMoving, isTravellerMoving, isTravellerFocused } = this.state;
 
     if (
       !data ||
@@ -534,7 +607,7 @@ export class Brush extends PureComponent<Props, State> {
       return null;
     }
 
-    const layerClass = classNames('recharts-brush', className);
+    const layerClass = clsx('recharts-brush', className);
     const isPanoramic = React.Children.count(children) === 1;
     const style = generatePrefixStyle('userSelect', 'none');
 
@@ -550,7 +623,8 @@ export class Brush extends PureComponent<Props, State> {
         {this.renderSlide(startX, endX)}
         {this.renderTravellerLayer(startX, 'startX')}
         {this.renderTravellerLayer(endX, 'endX')}
-        {(isTextActive || isSlideMoving || isTravellerMoving || alwaysShowText) && this.renderText()}
+        {(isTextActive || isSlideMoving || isTravellerMoving || isTravellerFocused || alwaysShowText) &&
+          this.renderText()}
       </Layer>
     );
   }

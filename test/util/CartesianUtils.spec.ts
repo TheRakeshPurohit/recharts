@@ -1,5 +1,12 @@
 import { scaleLinear, scaleBand } from 'victory-vendor/d3-scale';
-import { ScaleHelper, createLabeledScales } from '../../src/util/CartesianUtils';
+import { vi } from 'vitest';
+import {
+  ScaleHelper,
+  createLabeledScales,
+  getAngledRectangleWidth,
+  normalizeAngle,
+} from '../../src/util/CartesianUtils';
+import { combineEventHandlers } from '../../src/util/ChartUtils';
 
 describe('ScaleHelper', () => {
   it('apply() should return the expected value', () => {
@@ -67,5 +74,104 @@ describe('createLabeledScales', () => {
     expect(scales.isInRange({ y: 100 })).toEqual(false);
     expect(scales.isInRange({ x: 50, y: 100 })).toEqual(false);
     expect(scales.isInRange({})).toEqual(true);
+  });
+});
+
+describe('normalizeAngle', () => {
+  test.each([
+    [0, 0],
+    [180, 0],
+    [90, 90],
+    [360, 0],
+    [-1, 179],
+    [-180, 0],
+    [-720, 0],
+    [720, 0],
+    [45, 45],
+  ])('normalizes angles correctly', (input, expected) => {
+    expect(normalizeAngle(input)).toBeCloseTo(expected);
+  });
+});
+
+describe('getAngledStringWidth', () => {
+  test.each([[180], [0], [360], [540], [-180]])(
+    'getAngledStringWidth returns width when angle is multiple of 180deg',
+    angle => {
+      expect(getAngledRectangleWidth({ width: 25, height: 17 }, angle)).toBeCloseTo(25);
+    },
+  );
+
+  test.each([[90], [-90], [270], [450], [-450]])(
+    'getAngledStringWidth returns height when angle is multiple of 90deg',
+    angle => {
+      expect(getAngledRectangleWidth({ width: 25, height: 17 }, angle)).toBeCloseTo(17);
+    },
+  );
+
+  describe('when width is larger than height', () => {
+    test.each([
+      [10, 30],
+      [10, 330],
+      [10, 150],
+      [10, 210],
+      [10, -30],
+      [5 / (Math.sqrt(3) / 2), 60],
+    ])('should return %s when angle is %s', (expectedWidth, angle) => {
+      expect(getAngledRectangleWidth({ width: 10, height: 5 }, angle)).toBeCloseTo(expectedWidth);
+    });
+  });
+
+  describe('when width is smaller than height', () => {
+    test.each([
+      [10, 60],
+      [10, 300],
+      [10, 120],
+      [10, 240],
+      [10, -60],
+      [5 / (Math.sqrt(2) / 2), 45],
+    ])('should return %s when angle is %s and width is smaller than height', (expectedWidth, angle) => {
+      expect(getAngledRectangleWidth({ width: 5, height: 20 }, angle)).toBeCloseTo(expectedWidth);
+    });
+  });
+});
+
+describe('combineEventHandlers', () => {
+  const testFunction = vi.fn();
+  const test1Function = vi.fn();
+
+  describe('when child function being combined is undefined', () => {
+    it('should be keeping the default function reference', () => {
+      const combineFunction = combineEventHandlers(testFunction, undefined);
+      expect(combineFunction).toEqual(testFunction);
+    });
+  });
+
+  describe('when combining functions that kept references.', () => {
+    const combineFunction = combineEventHandlers(testFunction, test1Function);
+    it('should return combined function', () => {
+      expect(combineFunction).not.toEqual(testFunction);
+      expect(combineFunction).not.toEqual(test1Function);
+    });
+
+    describe('when combining function again', () => {
+      const combineFunction2 = combineEventHandlers(testFunction, test1Function);
+      it('should be the same as the function when it was first combined', () => {
+        expect(combineFunction).toEqual(combineFunction2);
+      });
+    });
+
+    describe('when calling the combined function', () => {
+      it('original functions should be called', () => {
+        combineFunction();
+        expect(testFunction).toHaveBeenCalled();
+        expect(test1Function).toHaveBeenCalled();
+      });
+    });
+
+    describe('when combined with a new function', () => {
+      it('should return a new function', () => {
+        expect(combineEventHandlers(testFunction, () => 0)).not.toEqual(combineFunction);
+      });
+    });
   });
 });

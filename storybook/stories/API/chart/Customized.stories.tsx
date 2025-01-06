@@ -1,4 +1,5 @@
 import React from 'react';
+import { Args } from '@storybook/react';
 import {
   LineChart,
   XAxis,
@@ -14,7 +15,22 @@ import {
 } from '../../../../src';
 import { pageData } from '../../data';
 
+const GeneralProps: Args = {
+  component: {
+    description: `Use react element or function to render arbitrary customized content 
+      which can use the internal state and props of chart.`,
+    table: {
+      type: {
+        summary: 'ReactElement | Function',
+        defaultValue: null,
+      },
+      category: 'General',
+    },
+  },
+};
+
 export default {
+  argTypes: { ...GeneralProps },
   component: Customized,
   parameters: {
     controls: { include: ['data'] },
@@ -23,12 +39,13 @@ export default {
 
 const SimpleCustomized = {
   render: (args: Record<string, any>) => {
+    const { data } = args;
     return (
       <ResponsiveContainer width="100%" height={500}>
         <LineChart
           width={500}
           height={300}
-          data={args.data}
+          data={data}
           margin={{
             top: 5,
             right: 30,

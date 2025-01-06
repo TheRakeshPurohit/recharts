@@ -3,25 +3,38 @@
  */
 import React, { PureComponent, ReactElement } from 'react';
 import Animate from 'react-smooth';
-import classNames from 'classnames';
-import _ from 'lodash';
+import isFunction from 'lodash/isFunction';
+import isNil from 'lodash/isNil';
+import isEqual from 'lodash/isEqual';
+
+import clsx from 'clsx';
 import { Curve, CurveType, Props as CurveProps, Point as CurvePoint } from '../shape/Curve';
 import { Dot, Props as DotProps } from '../shape/Dot';
 import { Layer } from '../container/Layer';
 import { ImplicitLabelType } from '../component/Label';
 import { LabelList } from '../component/LabelList';
-import { ErrorBar, Props as ErrorBarProps } from './ErrorBar';
+import { ErrorBar, ErrorBarDataPointFormatter, Props as ErrorBarProps } from './ErrorBar';
 import { uniqueId, interpolateNumber } from '../util/DataUtils';
-import { findAllByType, filterProps } from '../util/ReactUtils';
+import { findAllByType, filterProps, hasClipDot } from '../util/ReactUtils';
 import { Global } from '../util/Global';
 import { getCateCoordinateOfLine, getValueByDataKey } from '../util/ChartUtils';
 import { Props as XAxisProps } from './XAxis';
 import { Props as YAxisProps } from './YAxis';
-import { D3Scale, LegendType, TooltipType, AnimationTiming, ChartOffset, DataKey, TickItem } from '../util/types';
+import {
+  D3Scale,
+  LegendType,
+  TooltipType,
+  AnimationTiming,
+  ChartOffset,
+  DataKey,
+  TickItem,
+  AnimationDuration,
+  ActiveShape,
+} from '../util/types';
 
-type LineDot = ReactElement<SVGElement> | ((props: any) => ReactElement<SVGElement>) | DotProps | boolean;
+export type LineDot = ReactElement<SVGElement> | ((props: any) => ReactElement<SVGElement>) | DotProps | boolean;
 
-interface LinePointItem extends CurvePoint {
+export interface LinePointItem extends CurvePoint {
   value?: number;
   payload?: any;
 }
@@ -52,7 +65,7 @@ interface LineProps extends InternalLineProps {
   hide?: boolean;
 
   // whether have dot in line
-  activeDot?: LineDot;
+  activeDot?: ActiveShape<DotProps> | DotProps;
   dot?: LineDot;
 
   onAnimationStart?: () => void;
@@ -61,7 +74,7 @@ interface LineProps extends InternalLineProps {
   isAnimationActive?: boolean;
   animateNewValues?: boolean;
   animationBegin?: number;
-  animationDuration?: number;
+  animationDuration?: AnimationDuration;
   animationEasing?: AnimationTiming;
   animationId?: number;
   id?: string;
@@ -138,14 +151,14 @@ export class Line extends PureComponent<Props, State> {
       if (layout === 'horizontal') {
         return {
           x: getCateCoordinateOfLine({ axis: xAxis, ticks: xAxisTicks, bandSize, entry, index }),
-          y: _.isNil(value) ? null : yAxis.scale(value),
+          y: isNil(value) ? null : yAxis.scale(value),
           value,
           payload: entry,
         };
       }
 
       return {
-        x: _.isNil(value) ? null : xAxis.scale(value),
+        x: isNil(value) ? null : xAxis.scale(value),
         y: getCateCoordinateOfLine({ axis: yAxis, ticks: yAxisTicks, bandSize, entry, index }),
         value,
         payload: entry,
@@ -169,6 +182,17 @@ export class Line extends PureComponent<Props, State> {
 
     const totalLength = this.getTotalLength();
     this.setState({ totalLength });
+  }
+
+  componentDidUpdate(): void {
+    if (!this.props.isAnimationActive) {
+      return;
+    }
+
+    const totalLength = this.getTotalLength();
+    if (totalLength !== this.state.totalLength) {
+      this.setState({ totalLength });
+    }
   }
 
   static getDerivedStateFromProps(nextProps: Props, prevState: State): State {
@@ -198,15 +222,24 @@ export class Line extends PureComponent<Props, State> {
     }
   }
 
+  generateSimpleStrokeDasharray = (totalLength: number, length: number): string => {
+    return `${length}px ${totalLength - length}px`;
+  };
+
   getStrokeDasharray = (length: number, totalLength: number, lines: number[]) => {
     const lineLength = lines.reduce((pre, next) => pre + next);
+
+    // if lineLength is 0 return the default when no strokeDasharray is provided
+    if (!lineLength) {
+      return this.generateSimpleStrokeDasharray(totalLength, length);
+    }
 
     const count = Math.floor(length / lineLength);
     const remainLength = length % lineLength;
     const restLength = totalLength - length;
 
-    let remainLines = [];
-    for (let i = 0, sum = 0; ; sum += lines[i], ++i) {
+    let remainLines: number[] = [];
+    for (let i = 0, sum = 0; i < lines.length; sum += lines[i], ++i) {
       if (sum + lines[i] > remainLength) {
         remainLines = [...lines.slice(0, i), remainLength - sum];
         break;
@@ -263,14 +296,14 @@ export class Line extends PureComponent<Props, State> {
       return null;
     }
 
-    function dataPointFormatter(dataPoint: LinePointItem, dataKey: Props['dataKey']) {
+    const dataPointFormatter: ErrorBarDataPointFormatter = (dataPoint: LinePointItem, dataKey) => {
       return {
         x: dataPoint.x,
         y: dataPoint.y,
         value: dataPoint.value,
         errorVal: getValueByDataKey(dataPoint.payload, dataKey),
       };
-    }
+    };
 
     const errorBarProps = {
       clipPath: needClip ? `url(#clipPath-${clipPathId})` : null,
@@ -278,10 +311,9 @@ export class Line extends PureComponent<Props, State> {
 
     return (
       <Layer {...errorBarProps}>
-        {errorBarItems.map((item: ReactElement<ErrorBarProps>, i: number) =>
+        {errorBarItems.map((item: ReactElement<ErrorBarProps>) =>
           React.cloneElement(item, {
-            // eslint-disable-next-line react/no-array-index-key
-            key: `bar-${i}`,
+            key: `bar-${item.props.dataKey}`,
             data: points,
             xAxis,
             yAxis,
@@ -298,24 +330,25 @@ export class Line extends PureComponent<Props, State> {
 
     if (React.isValidElement(option)) {
       dotItem = React.cloneElement(option, props);
-    } else if (_.isFunction(option)) {
+    } else if (isFunction(option)) {
       dotItem = option(props);
     } else {
-      const className = classNames('recharts-line-dot', option ? (option as DotProps).className : '');
-      dotItem = <Dot {...props} className={className} />;
+      const { key, ...dotProps } = props;
+      const className = clsx('recharts-line-dot', typeof option !== 'boolean' ? option.className : '');
+      dotItem = <Dot key={key} {...dotProps} className={className} />;
     }
 
     return dotItem;
   }
 
-  renderDots(needClip: boolean, clipPathId: string) {
+  renderDots(needClip: boolean, clipDot: boolean, clipPathId: string) {
     const { isAnimationActive } = this.props;
 
     if (isAnimationActive && !this.state.isAnimationFinished) {
       return null;
     }
     const { dot, points, dataKey } = this.props;
-    const lineProps = filterProps(this.props);
+    const lineProps = filterProps(this.props, false);
     const customDotProps = filterProps(dot, true);
     const dots = points.map((entry, i) => {
       const dotProps = {
@@ -334,11 +367,11 @@ export class Line extends PureComponent<Props, State> {
       return Line.renderDotItem(dot, dotProps);
     });
     const dotsProps = {
-      clipPath: needClip ? `url(#clipPath-${clipPathId})` : null,
+      clipPath: needClip ? `url(#clipPath-${clipDot ? '' : 'dots-'}${clipPathId})` : null,
     };
 
     return (
-      <Layer className="recharts-line-dots" key="dots" {...dotsProps} role="img">
+      <Layer className="recharts-line-dots" key="dots" {...dotsProps}>
         {dots}
       </Layer>
     );
@@ -424,7 +457,7 @@ export class Line extends PureComponent<Props, State> {
             const lines = `${strokeDasharray}`.split(/[,\s]+/gim).map(num => parseFloat(num));
             currentStrokeDasharray = this.getStrokeDasharray(curLength, totalLength, lines);
           } else {
-            currentStrokeDasharray = `${curLength}px ${totalLength - curLength}px`;
+            currentStrokeDasharray = this.generateSimpleStrokeDasharray(totalLength, curLength);
           }
 
           return this.renderCurveStatically(points, needClip, clipPathId, {
@@ -443,7 +476,7 @@ export class Line extends PureComponent<Props, State> {
       isAnimationActive &&
       points &&
       points.length &&
-      ((!prevPoints && totalLength > 0) || !_.isEqual(prevPoints, points))
+      ((!prevPoints && totalLength > 0) || !isEqual(prevPoints, points))
     ) {
       return this.renderCurveWithAnimation(needClip, clipPathId);
     }
@@ -460,22 +493,37 @@ export class Line extends PureComponent<Props, State> {
 
     const { isAnimationFinished } = this.state;
     const hasSinglePoint = points.length === 1;
-    const layerClass = classNames('recharts-line', className);
-    const needClip = (xAxis && xAxis.allowDataOverflow) || (yAxis && yAxis.allowDataOverflow);
-    const clipPathId = _.isNil(id) ? this.id : id;
+    const layerClass = clsx('recharts-line', className);
+    const needClipX = xAxis && xAxis.allowDataOverflow;
+    const needClipY = yAxis && yAxis.allowDataOverflow;
+    const needClip = needClipX || needClipY;
+    const clipPathId = isNil(id) ? this.id : id;
+    const { r = 3, strokeWidth = 2 } = filterProps(dot, false) ?? { r: 3, strokeWidth: 2 };
+    const { clipDot = true } = hasClipDot(dot) ? dot : {};
+    const dotSize = r * 2 + strokeWidth;
 
     return (
       <Layer className={layerClass}>
-        {needClip ? (
+        {needClipX || needClipY ? (
           <defs>
             <clipPath id={`clipPath-${clipPathId}`}>
-              <rect x={left} y={top} width={width} height={height} />
+              <rect
+                x={needClipX ? left : left - width / 2}
+                y={needClipY ? top : top - height / 2}
+                width={needClipX ? width : width * 2}
+                height={needClipY ? height : height * 2}
+              />
             </clipPath>
+            {!clipDot && (
+              <clipPath id={`clipPath-dots-${clipPathId}`}>
+                <rect x={left - dotSize / 2} y={top - dotSize / 2} width={width + dotSize} height={height + dotSize} />
+              </clipPath>
+            )}
           </defs>
         ) : null}
         {!hasSinglePoint && this.renderCurve(needClip, clipPathId)}
         {this.renderErrorBar(needClip, clipPathId)}
-        {(hasSinglePoint || dot) && this.renderDots(needClip, clipPathId)}
+        {(hasSinglePoint || dot) && this.renderDots(needClip, clipDot, clipPathId)}
         {(!isAnimationActive || isAnimationFinished) && LabelList.renderCallByParent(this.props, points)}
       </Layer>
     );

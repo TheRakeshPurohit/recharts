@@ -2,8 +2,13 @@
  * @file TreemapChart
  */
 import React, { PureComponent, ReactElement, SVGProps } from 'react';
-import classNames from 'classnames';
-import _ from 'lodash';
+import maxBy from 'lodash/maxBy';
+import min from 'lodash/min';
+import get from 'lodash/get';
+import sumBy from 'lodash/sumBy';
+import isFunction from 'lodash/isFunction';
+
+import clsx from 'clsx';
 import { Surface } from '../container/Surface';
 import { Layer } from '../container/Layer';
 import { Tooltip } from '../component/Tooltip';
@@ -96,7 +101,7 @@ const getNodesTree = ({ nodes, links }: SankeyData, width: number, nodeWidth: nu
       updateDepthOfTargets(tree, node);
     }
   }
-  const maxDepth = _.maxBy(tree, (entry: SankeyNode) => entry.depth).depth;
+  const maxDepth = maxBy(tree, (entry: SankeyNode) => entry.depth).depth;
 
   if (maxDepth >= 1) {
     const childWidth = (width - nodeWidth) / maxDepth;
@@ -131,8 +136,8 @@ const getDepthTree = (tree: any): any[] => {
 };
 
 const updateYOfTree = (depthTree: any, height: number, nodePadding: number, links: any) => {
-  const yRatio: number = _.min(
-    depthTree.map((nodes: any) => (height - (nodes.length - 1) * nodePadding) / _.sumBy(nodes, getValue)),
+  const yRatio: number = min(
+    depthTree.map((nodes: any) => (height - (nodes.length - 1) * nodePadding) / sumBy(nodes, getValue)),
   );
 
   for (let d = 0, maxDepth = depthTree.length; d < maxDepth; d++) {
@@ -147,13 +152,15 @@ const updateYOfTree = (depthTree: any, height: number, nodePadding: number, link
   return links.map((link: any) => ({ ...link, dy: getValue(link) * yRatio }));
 };
 
-const resolveCollisions = (depthTree: any[], height: number, nodePadding: number) => {
+const resolveCollisions = (depthTree: any[], height: number, nodePadding: number, sort = true) => {
   for (let i = 0, len = depthTree.length; i < len; i++) {
     const nodes = depthTree[i];
     const n = nodes.length;
 
     // Sort by the value of y
-    nodes.sort(ascendingY);
+    if (sort) {
+      nodes.sort(ascendingY);
+    }
 
     let y0 = 0;
     for (let j = 0; j < n; j++) {
@@ -252,6 +259,7 @@ const computeData = ({
   iterations,
   nodeWidth,
   nodePadding,
+  sort,
 }: {
   data: SankeyData;
   width: number;
@@ -259,6 +267,7 @@ const computeData = ({
   iterations: any;
   nodeWidth: number;
   nodePadding: number;
+  sort: boolean;
 }): {
   nodes: SankeyNode[];
   links: SankeyLink[];
@@ -268,17 +277,17 @@ const computeData = ({
   const depthTree = getDepthTree(tree);
   const newLinks = updateYOfTree(depthTree, height, nodePadding, links);
 
-  resolveCollisions(depthTree, height, nodePadding);
+  resolveCollisions(depthTree, height, nodePadding, sort);
 
   let alpha = 1;
   for (let i = 1; i <= iterations; i++) {
     relaxRightToLeft(tree, depthTree, newLinks, (alpha *= 0.99));
 
-    resolveCollisions(depthTree, height, nodePadding);
+    resolveCollisions(depthTree, height, nodePadding, sort);
 
     relaxLeftToRight(tree, depthTree, newLinks, alpha);
 
-    resolveCollisions(depthTree, height, nodePadding);
+    resolveCollisions(depthTree, height, nodePadding, sort);
   }
 
   updateYOfLinks(tree, newLinks);
@@ -379,6 +388,8 @@ interface SankeyProps {
   onMouseEnter?: any;
 
   onMouseLeave?: any;
+
+  sort?: boolean;
 }
 
 type Props = SVGProps<SVGElement> & SankeyProps;
@@ -389,6 +400,7 @@ interface State {
   isTooltipActive: boolean;
   nodes: SankeyNode[];
   links: SankeyLink[];
+  sort?: boolean;
 
   prevData?: SankeyData;
   prevWidth?: number;
@@ -397,6 +409,7 @@ interface State {
   prevIterations?: number;
   prevNodeWidth?: number;
   prevNodePadding?: number;
+  prevSort?: boolean;
 }
 
 export class Sankey extends PureComponent<Props, State> {
@@ -410,6 +423,7 @@ export class Sankey extends PureComponent<Props, State> {
     linkCurvature: 0.5,
     iterations: 32,
     margin: { top: 5, right: 5, bottom: 5, left: 5 },
+    sort: true,
   };
 
   state = {
@@ -421,7 +435,7 @@ export class Sankey extends PureComponent<Props, State> {
   };
 
   static getDerivedStateFromProps(nextProps: Props, prevState: State): State {
-    const { data, width, height, margin, iterations, nodeWidth, nodePadding } = nextProps;
+    const { data, width, height, margin, iterations, nodeWidth, nodePadding, sort } = nextProps;
 
     if (
       data !== prevState.prevData ||
@@ -430,7 +444,8 @@ export class Sankey extends PureComponent<Props, State> {
       !shallowEqual(margin, prevState.prevMargin) ||
       iterations !== prevState.prevIterations ||
       nodeWidth !== prevState.prevNodeWidth ||
-      nodePadding !== prevState.prevNodePadding
+      nodePadding !== prevState.prevNodePadding ||
+      sort !== prevState.sort
     ) {
       const contentWidth = width - ((margin && margin.left) || 0) - ((margin && margin.right) || 0);
       const contentHeight = height - ((margin && margin.top) || 0) - ((margin && margin.bottom) || 0);
@@ -441,6 +456,7 @@ export class Sankey extends PureComponent<Props, State> {
         iterations,
         nodeWidth,
         nodePadding,
+        sort,
       });
 
       return {
@@ -455,6 +471,7 @@ export class Sankey extends PureComponent<Props, State> {
         prevNodePadding: nodePadding,
         prevNodeWidth: nodeWidth,
         prevIterations: iterations,
+        prevSort: sort,
       };
     }
 
@@ -514,7 +531,12 @@ export class Sankey extends PureComponent<Props, State> {
     if (tooltipItem && tooltipItem.props.trigger === 'click') {
       if (this.state.isTooltipActive) {
         this.setState(prev => {
-          return { ...prev, activeElement: undefined, activeElementType: undefined, isTooltipActive: false };
+          return {
+            ...prev,
+            activeElement: undefined as any,
+            activeElementType: undefined as any,
+            isTooltipActive: false,
+          };
         });
       } else {
         this.setState(prev => {
@@ -535,7 +557,7 @@ export class Sankey extends PureComponent<Props, State> {
     if (React.isValidElement(option)) {
       return React.cloneElement(option, props);
     }
-    if (_.isFunction(option)) {
+    if (isFunction(option)) {
       return option(props);
     }
 
@@ -552,15 +574,15 @@ export class Sankey extends PureComponent<Props, State> {
         stroke="#333"
         strokeWidth={linkWidth}
         strokeOpacity="0.2"
-        {...filterProps(others)}
+        {...filterProps(others, false)}
       />
     );
   }
 
   renderLinks(links: SankeyLink[], nodes: SankeyNode[]) {
     const { linkCurvature, link: linkContent, margin } = this.props;
-    const top = _.get(margin, 'top') || 0;
-    const left = _.get(margin, 'left') || 0;
+    const top = get(margin, 'top') || 0;
+    const left = get(margin, 'left') || 0;
 
     return (
       <Layer className="recharts-sankey-links" key="recharts-sankey-links">
@@ -588,7 +610,7 @@ export class Sankey extends PureComponent<Props, State> {
             linkWidth,
             index: i,
             payload: { ...link, source, target },
-            ...filterProps(linkContent),
+            ...filterProps(linkContent, false),
           };
           const events = {
             onMouseEnter: this.handleMouseEnter.bind(this, linkProps, 'link'),
@@ -597,8 +619,7 @@ export class Sankey extends PureComponent<Props, State> {
           };
 
           return (
-            // eslint-disable-next-line react/no-array-index-key
-            <Layer key={`link${i}`} {...events}>
+            <Layer key={`link-${link.source}-${link.target}-${link.value}`} {...events}>
               {(this.constructor as any).renderLinkItem(linkContent, linkProps)}
             </Layer>
           );
@@ -611,26 +632,32 @@ export class Sankey extends PureComponent<Props, State> {
     if (React.isValidElement(option)) {
       return React.cloneElement(option, props);
     }
-    if (_.isFunction(option)) {
+    if (isFunction(option)) {
       return option(props);
     }
 
     return (
-      <Rectangle className="recharts-sankey-node" fill="#0088fe" fillOpacity="0.8" {...filterProps(props)} role="img" />
+      <Rectangle
+        className="recharts-sankey-node"
+        fill="#0088fe"
+        fillOpacity="0.8"
+        {...filterProps(props, false)}
+        role="img"
+      />
     );
   }
 
   renderNodes(nodes: SankeyNode[]) {
     const { node: nodeContent, margin } = this.props;
-    const top = _.get(margin, 'top') || 0;
-    const left = _.get(margin, 'left') || 0;
+    const top = get(margin, 'top') || 0;
+    const left = get(margin, 'left') || 0;
 
     return (
       <Layer className="recharts-sankey-nodes" key="recharts-sankey-nodes">
         {nodes.map((node, i) => {
           const { x, y, dx, dy } = node;
           const nodeProps = {
-            ...filterProps(nodeContent),
+            ...filterProps(nodeContent, false),
             x: x + left,
             y: y + top,
             width: dx,
@@ -645,8 +672,7 @@ export class Sankey extends PureComponent<Props, State> {
           };
 
           return (
-            // eslint-disable-next-line react/no-array-index-key
-            <Layer key={`node${i}`} {...events}>
+            <Layer key={`node-${node.x}-${node.y}-${node.value}`} {...events}>
               {(this.constructor as any).renderNodeItem(nodeContent, nodeProps)}
             </Layer>
           );
@@ -655,7 +681,7 @@ export class Sankey extends PureComponent<Props, State> {
     );
   }
 
-  renderTooltip() {
+  renderTooltip(): ReactElement {
     const { children, width, height, nameKey } = this.props;
     const tooltipItem = findChildByType(children, Tooltip);
 
@@ -686,11 +712,11 @@ export class Sankey extends PureComponent<Props, State> {
 
     const { width, height, className, style, children, ...others } = this.props;
     const { links, nodes } = this.state;
-    const attrs = filterProps(others);
+    const attrs = filterProps(others, false);
 
     return (
       <div
-        className={classNames('recharts-wrapper', className)}
+        className={clsx('recharts-wrapper', className)}
         style={{ ...style, position: 'relative', cursor: 'default', width, height }}
         role="region"
       >

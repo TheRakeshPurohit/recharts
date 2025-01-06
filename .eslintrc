@@ -3,6 +3,7 @@
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
     "plugin:react/recommended",
+    "plugin:react-hooks/recommended",
     "eslint-config-airbnb",
     "prettier/@typescript-eslint",
     "plugin:prettier/recommended",
@@ -26,11 +27,15 @@
         "tabWidth": 2,
         "useTabs": false,
         "trailingComma": "all",
-        "arrowParens": "avoid"
+        "arrowParens": "avoid",
+        "endOfLine": "auto"
       }
     ],
     "import/extensions": "off",
-    "valid-jsdoc": "error",
+    "valid-jsdoc": ["error", {
+      "requireReturnType": false,
+      "requireParamType": false
+    }],
     "react/no-did-update-set-state": "warn",
     "react/sort-comp": "off",
     "react/jsx-uses-react": "error",
@@ -51,18 +56,10 @@
     "import/no-extraneous-dependencies": [
       "error",
       {
-        "devDependencies": [
-          "demo/**",
-          "test/**",
-          "test-jest/**",
-          "*.config.js",
-          "scripts/**",
-          "**/Spec.js",
-          "storybook/**"
-        ]
+        "devDependencies": true
       }
     ],
-    "max-len": ["warn", 120],
+    "max-len": ["warn", 150],
     "prefer-destructuring": "error",
     "object-curly-newline": "off",
     "function-paren-newline": "off",
@@ -97,6 +94,17 @@
         "ignoreRestSiblings": true,
         "argsIgnorePattern": "^_"
       }
+    ],
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "lodash",
+            "message": "Import [module] from lodash/[module] instead"
+          }
+        ]
+      }
     ]
   },
   "overrides": [
@@ -105,7 +113,8 @@
       "rules": {
         "react/prop-types": "off",
         "no-useless-constructor": "off",
-        "import/no-default-export": "off"
+        "import/no-default-export": "off",
+        "react-hooks/rules-of-hooks": "off"
       }
     }
   ],

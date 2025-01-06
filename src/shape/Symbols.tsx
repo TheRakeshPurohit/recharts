@@ -1,8 +1,9 @@
 /**
  * @fileOverview Curve
  */
-import React, { PureComponent, SVGProps } from 'react';
-import _ from 'lodash';
+import React, { SVGProps } from 'react';
+import upperFirst from 'lodash/upperFirst';
+
 import {
   symbol as shapeSymbol,
   symbolCircle,
@@ -14,7 +15,7 @@ import {
   symbolWye,
   SymbolType as D3SymbolType,
 } from 'victory-vendor/d3-shape';
-import classNames from 'classnames';
+import clsx from 'clsx';
 import { SymbolType } from '../util/types';
 import { filterProps } from '../util/ReactUtils';
 
@@ -36,7 +37,7 @@ const symbolFactories: SymbolFactory = {
 const RADIAN = Math.PI / 180;
 
 const getSymbolFactory = (type: SymbolType) => {
-  const name = `symbol${_.upperFirst(type)}`;
+  const name = `symbol${upperFirst(type)}`;
 
   return symbolFactories[name] || symbolCircle;
 };
@@ -67,7 +68,7 @@ const calculateAreaSize = (size: number, sizeType: SizeType, type: SymbolType) =
   }
 };
 
-interface SymbolsProp {
+export interface InnerSymbolsProp {
   className?: string;
   type: SymbolType;
   cx?: number;
@@ -76,46 +77,41 @@ interface SymbolsProp {
   sizeType?: SizeType;
 }
 
-export type Props = SVGProps<SVGPathElement> & SymbolsProp;
+export type SymbolsProps = SVGProps<SVGPathElement> & InnerSymbolsProp;
 
-export class Symbols extends PureComponent<Props> {
-  static defaultProps = {
-    type: 'circle',
-    size: 64,
-    sizeType: 'area',
-  };
+const registerSymbol = (key: string, factory: D3SymbolType) => {
+  symbolFactories[`symbol${upperFirst(key)}`] = factory;
+};
 
-  static registerSymbol = (key: string, factory: D3SymbolType) => {
-    symbolFactories[`symbol${_.upperFirst(key)}`] = factory;
-  };
+export const Symbols = ({ type = 'circle', size = 64, sizeType = 'area', ...rest }: SymbolsProps) => {
+  const props = { ...rest, type, size, sizeType };
 
   /**
    * Calculate the path of curve
    * @return {String} path
    */
-  getPath() {
-    const { size, sizeType, type } = this.props;
+  const getPath = () => {
     const symbolFactory = getSymbolFactory(type);
     const symbol = shapeSymbol().type(symbolFactory).size(calculateAreaSize(size, sizeType, type));
 
     return symbol();
+  };
+
+  const { className, cx, cy } = props;
+  const filteredProps = filterProps(props, true);
+
+  if (cx === +cx && cy === +cy && size === +size) {
+    return (
+      <path
+        {...filteredProps}
+        className={clsx('recharts-symbols', className)}
+        transform={`translate(${cx}, ${cy})`}
+        d={getPath()}
+      />
+    );
   }
 
-  render() {
-    const { className, cx, cy, size } = this.props;
-    const filteredProps = filterProps(this.props, true);
+  return null;
+};
 
-    if (cx === +cx && cy === +cy && size === +size) {
-      return (
-        <path
-          {...filteredProps}
-          className={classNames('recharts-symbols', className)}
-          transform={`translate(${cx}, ${cy})`}
-          d={this.getPath()}
-        />
-      );
-    }
-
-    return null;
-  }
-}
+Symbols.registerSymbol = registerSymbol;

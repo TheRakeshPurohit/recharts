@@ -3,22 +3,23 @@
  */
 import React, { PureComponent, ReactElement } from 'react';
 import Animate from 'react-smooth';
-import classNames from 'classnames';
-import _ from 'lodash';
+
+import isNil from 'lodash/isNil';
+import isEqual from 'lodash/isEqual';
+import isFunction from 'lodash/isFunction';
+import clsx from 'clsx';
 import { Layer } from '../container/Layer';
 import { ImplicitLabelListType, LabelList } from '../component/LabelList';
 import { findAllByType, filterProps } from '../util/ReactUtils';
 import { Global } from '../util/Global';
 import { ZAxis, Props as ZAxisProps } from './ZAxis';
 import { Curve, Props as CurveProps, CurveType } from '../shape/Curve';
-import { Symbols, Props as SymbolsProps } from '../shape/Symbols';
-import { ErrorBar } from './ErrorBar';
+import { ErrorBar, Props as ErrorBarProps } from './ErrorBar';
 import { Cell } from '../component/Cell';
 import { uniqueId, interpolateNumber, getLinearRegression } from '../util/DataUtils';
 import { getValueByDataKey, getCateCoordinateOfLine } from '../util/ChartUtils';
 import {
   LegendType,
-  SymbolType,
   AnimationTiming,
   D3Scale,
   ChartOffset,
@@ -26,10 +27,15 @@ import {
   TickItem,
   adaptEventsOfChild,
   PresentationAttributesAdaptChildEvent,
+  AnimationDuration,
+  ActiveShape,
+  SymbolType,
 } from '../util/types';
 import { TooltipType } from '../component/DefaultTooltipContent';
 import { Props as XAxisProps } from './XAxis';
 import { Props as YAxisProps } from './YAxis';
+import { ScatterSymbol } from '../util/ScatterUtils';
+import { InnerSymbolsProp } from '../shape/Symbols';
 
 interface ScattterPointNode {
   x?: number | string;
@@ -37,13 +43,15 @@ interface ScattterPointNode {
   z?: number | string;
 }
 
-interface ScatterPointItem {
+export interface ScatterPointItem {
   cx?: number;
   cy?: number;
   size?: number;
   node?: ScattterPointNode;
   payload?: any;
 }
+
+export type ScatterCustomizedShape = ActiveShape<ScatterPointItem, SVGPathElement & InnerSymbolsProp> | SymbolType;
 
 interface ScatterProps {
   data?: any[];
@@ -53,6 +61,8 @@ interface ScatterProps {
 
   left?: number;
   top?: number;
+  width?: number;
+  height?: number;
 
   xAxis?: Omit<XAxisProps, 'scale'> & { scale: D3Scale<string | number> };
   yAxis?: Omit<YAxisProps, 'scale'> & { scale: D3Scale<string | number> };
@@ -69,8 +79,8 @@ interface ScatterProps {
   name?: string | number;
 
   activeIndex?: number;
-  activeShape?: ReactElement<SVGElement> | ((props: any) => ReactElement<SVGElement>) | SymbolsProps;
-  shape?: SymbolType | ReactElement<SVGElement> | ((props: any) => ReactElement<SVGElement>);
+  activeShape?: ScatterCustomizedShape;
+  shape?: ScatterCustomizedShape;
   points?: ScatterPointItem[];
   hide?: boolean;
   label?: ImplicitLabelListType<any>;
@@ -78,7 +88,7 @@ interface ScatterProps {
   isAnimationActive?: boolean;
   animationId?: number;
   animationBegin?: number;
-  animationDuration?: number;
+  animationDuration?: AnimationDuration;
   animationEasing?: AnimationTiming;
 }
 
@@ -141,8 +151,8 @@ export class Scatter extends PureComponent<Props, State> {
   }) => {
     const { tooltipType } = item.props;
     const cells = findAllByType(item.props.children, Cell);
-    const xAxisDataKey = _.isNil(xAxis.dataKey) ? item.props.dataKey : xAxis.dataKey;
-    const yAxisDataKey = _.isNil(yAxis.dataKey) ? item.props.dataKey : yAxis.dataKey;
+    const xAxisDataKey = isNil(xAxis.dataKey) ? item.props.dataKey : xAxis.dataKey;
+    const yAxisDataKey = isNil(yAxis.dataKey) ? item.props.dataKey : yAxis.dataKey;
     const zAxisDataKey = zAxis && zAxis.dataKey;
     const defaultRangeZ = zAxis ? zAxis.range : ZAxis.defaultProps.range;
     const defaultZ = defaultRangeZ && defaultRangeZ[0];
@@ -151,10 +161,10 @@ export class Scatter extends PureComponent<Props, State> {
     const points = displayedData.map((entry, index) => {
       const x = getValueByDataKey(entry, xAxisDataKey);
       const y = getValueByDataKey(entry, yAxisDataKey);
-      const z = (!_.isNil(zAxisDataKey) && getValueByDataKey(entry, zAxisDataKey)) || '-';
+      const z = (!isNil(zAxisDataKey) && getValueByDataKey(entry, zAxisDataKey)) || '-';
       const tooltipPayload = [
         {
-          name: _.isNil(xAxis.dataKey) ? item.props.name : xAxis.name || xAxis.dataKey,
+          name: isNil(xAxis.dataKey) ? item.props.name : xAxis.name || xAxis.dataKey,
           unit: xAxis.unit || '',
           value: x,
           payload: entry,
@@ -162,7 +172,7 @@ export class Scatter extends PureComponent<Props, State> {
           type: tooltipType,
         },
         {
-          name: _.isNil(yAxis.dataKey) ? item.props.name : yAxis.name || yAxis.dataKey,
+          name: isNil(yAxis.dataKey) ? item.props.name : yAxis.name || yAxis.dataKey,
           unit: yAxis.unit || '',
           value: y,
           payload: entry,
@@ -255,35 +265,30 @@ export class Scatter extends PureComponent<Props, State> {
 
   id = uniqueId('recharts-scatter-');
 
-  static renderSymbolItem(option: Props['activeShape'] | Props['shape'], props: any) {
-    let symbol;
-
-    if (React.isValidElement(option)) {
-      symbol = React.cloneElement(option, props);
-    } else if (_.isFunction(option)) {
-      symbol = option(props);
-    } else if (typeof option === 'string') {
-      symbol = <Symbols {...props} type={option} />;
-    }
-
-    return symbol;
-  }
-
   renderSymbolsStatically(points: ScatterPointItem[]) {
     const { shape, activeShape, activeIndex } = this.props;
-    const baseProps = filterProps(this.props);
+    const baseProps = filterProps(this.props, false);
 
     return points.map((entry, i) => {
-      const props = { key: `symbol-${i}`, ...baseProps, ...entry };
+      const isActive = activeIndex === i;
+      const option = isActive ? activeShape : shape;
+      const props = { ...baseProps, ...entry };
 
       return (
         <Layer
           className="recharts-scatter-symbol"
+          // eslint-disable-next-line react/no-array-index-key
+          key={`symbol-${entry?.cx}-${entry?.cy}-${entry?.size}-${i}`}
           {...adaptEventsOfChild(this.props, entry, i)}
-          key={`symbol-${i}`} // eslint-disable-line react/no-array-index-key
           role="img"
         >
-          {Scatter.renderSymbolItem(activeIndex === i ? activeShape : shape, props)}
+          <ScatterSymbol
+            option={option}
+            isActive={isActive}
+            // eslint-disable-next-line react/no-array-index-key
+            key={`symbol-${i}`}
+            {...props}
+          />
         </Layer>
       );
     });
@@ -337,7 +342,7 @@ export class Scatter extends PureComponent<Props, State> {
     const { points, isAnimationActive } = this.props;
     const { prevPoints } = this.state;
 
-    if (isAnimationActive && points && points.length && (!prevPoints || !_.isEqual(prevPoints, points))) {
+    if (isAnimationActive && points && points.length && (!prevPoints || !isEqual(prevPoints, points))) {
       return this.renderSymbolsWithAnimation();
     }
 
@@ -357,42 +362,30 @@ export class Scatter extends PureComponent<Props, State> {
       return null;
     }
 
-    function dataPointFormatterY(dataPoint: ScatterPointItem, dataKey: Props['dataKey']) {
-      return {
-        x: dataPoint.cx,
-        y: dataPoint.cy,
-        value: +dataPoint.node.y,
-        errorVal: getValueByDataKey(dataPoint, dataKey),
-      };
-    }
-
-    function dataPointFormatterX(dataPoint: ScatterPointItem, dataKey: Props['dataKey']) {
-      return {
-        x: dataPoint.cx,
-        y: dataPoint.cy,
-        value: +dataPoint.node.x,
-        errorVal: getValueByDataKey(dataPoint, dataKey),
-      };
-    }
-
-    return errorBarItems.map((item, i: number) => {
-      const { direction } = item.props;
-
+    return errorBarItems.map((item: ReactElement<ErrorBarProps>, i: number) => {
+      const { direction, dataKey: errorDataKey } = item.props;
       return React.cloneElement(item, {
-        key: i, // eslint-disable-line react/no-array-index-key
+        key: `${direction}-${errorDataKey}-${points[i]}`,
         data: points,
         xAxis,
         yAxis,
         layout: direction === 'x' ? 'vertical' : 'horizontal',
-        dataPointFormatter: direction === 'x' ? dataPointFormatterX : dataPointFormatterY,
+        dataPointFormatter: (dataPoint: ScatterPointItem, dataKey: Props['dataKey']) => {
+          return {
+            x: dataPoint.cx,
+            y: dataPoint.cy,
+            value: direction === 'x' ? +dataPoint.node.x : +dataPoint.node.y,
+            errorVal: getValueByDataKey(dataPoint, dataKey),
+          };
+        },
       });
     });
   }
 
   renderLine() {
     const { points, line, lineType, lineJointType } = this.props;
-    const scatterProps = filterProps(this.props);
-    const customLineProps = filterProps(line);
+    const scatterProps = filterProps(this.props, false);
+    const customLineProps = filterProps(line, false);
     let linePoints, lineItem;
 
     if (lineType === 'joint') {
@@ -415,7 +408,7 @@ export class Scatter extends PureComponent<Props, State> {
 
     if (React.isValidElement(line)) {
       lineItem = React.cloneElement(line as any, lineProps);
-    } else if (_.isFunction(line)) {
+    } else if (isFunction(line)) {
       lineItem = line(lineProps);
     } else {
       lineItem = <Curve {...lineProps} type={lineJointType} />;
@@ -434,16 +427,23 @@ export class Scatter extends PureComponent<Props, State> {
       return null;
     }
     const { isAnimationFinished } = this.state;
-    const layerClass = classNames('recharts-scatter', className);
-    const needClip = (xAxis && xAxis.allowDataOverflow) || (yAxis && yAxis.allowDataOverflow);
-    const clipPathId = _.isNil(id) ? this.id : id;
+    const layerClass = clsx('recharts-scatter', className);
+    const needClipX = xAxis && xAxis.allowDataOverflow;
+    const needClipY = yAxis && yAxis.allowDataOverflow;
+    const needClip = needClipX || needClipY;
+    const clipPathId = isNil(id) ? this.id : id;
 
     return (
       <Layer className={layerClass} clipPath={needClip ? `url(#clipPath-${clipPathId})` : null}>
-        {needClip ? (
+        {needClipX || needClipY ? (
           <defs>
             <clipPath id={`clipPath-${clipPathId}`}>
-              <rect x={left} y={top} width={width} height={height} />
+              <rect
+                x={needClipX ? left : left - width / 2}
+                y={needClipY ? top : top - height / 2}
+                width={needClipX ? width : width * 2}
+                height={needClipY ? height : height * 2}
+              />
             </clipPath>
           </defs>
         ) : null}

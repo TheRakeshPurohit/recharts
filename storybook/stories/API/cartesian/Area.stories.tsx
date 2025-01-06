@@ -1,93 +1,96 @@
 import React from 'react';
-import { Surface, Area, ResponsiveContainer } from '../../../../src';
-import { coordinateWithValueData } from '../../data';
+import { ComposedChart, Area, ResponsiveContainer, Legend, Tooltip, XAxis, YAxis } from '../../../../src';
+import { pageData } from '../../data';
+import { LineStyle } from '../props/Styles';
+import { AnimationProps } from '../props/AnimationProps';
+import { legendType } from '../props/Legend';
+import { General as GeneralProps, Internal } from '../props/CartesianComponentShared';
+import { ResponsiveProps } from '../props/Tooltip';
+import { getStoryArgsFromArgsTypesObject } from '../props/utils';
+
+const AreaSpecificProps = {
+  // These two props are not documented on the website. Further investigation is required to document them.
+  baseValue: { table: { category: 'Other' } },
+  isRange: { table: { category: 'Other' } },
+  stackId: {
+    description: `The id of group which this area should be stacked into. If no id is specified,
+    the area will not be stacked. When two components have the same value axis and same stackId,
+    then they are stacked in order.`,
+    table: {
+      type: {
+        summary: 'string | number',
+      },
+      category: 'General',
+    },
+  },
+};
 
 export default {
   component: Area,
   argTypes: {
-    stroke: {
-      control: { type: 'color' },
-    },
-    fill: {
-      control: { type: 'color' },
-    },
+    ...AreaSpecificProps,
+    ...LineStyle,
+    ...AnimationProps,
+    legendType,
+    ...GeneralProps,
+    ...Internal,
+    ...ResponsiveProps,
+    // Other
+    baseLine: { table: { category: 'Other' } },
+    left: { table: { category: 'Other' } },
+    top: { table: { category: 'Other' } },
+    xAxis: { table: { category: 'Other' } },
+    yAxis: { table: { category: 'Other' } },
   },
 };
 
-export const Simple = {
+const [surfaceWidth, surfaceHeight] = [600, 300];
+
+export const API = {
   render: (args: Record<string, any>) => {
-    const { data, ...areaArgs } = args;
-
-    const [surfaceWidth, surfaceHeight] = [600, 300];
-
     return (
       <ResponsiveContainer width="100%" height={surfaceHeight}>
-        <Surface
+        <ComposedChart
           width={surfaceWidth}
           height={surfaceHeight}
-          viewBox={{
-            x: 0,
-            y: 0,
-            width: surfaceWidth,
-            height: surfaceHeight,
+          margin={{
+            top: 20,
+            right: 20,
+            bottom: 20,
+            left: 20,
           }}
+          data={pageData}
         >
-          <Area dataKey="value" isAnimationActive={false} baseLine={200} points={data} {...areaArgs} />
-        </Surface>
+          {/* All components are added to show the interaction with the Area properties */}
+          <Area fill="red" stackId="1" dataKey="pv" />
+          <Legend />
+          <Tooltip />
+          <XAxis dataKey="name" />
+          <YAxis />
+          {/* The target component */}
+          <Area dataKey="uv" {...args} />
+        </ComposedChart>
       </ResponsiveContainer>
     );
   },
   args: {
-    data: coordinateWithValueData,
-  },
-};
-
-export const StrokeAndFill = {
-  ...Simple,
-  args: {
-    data: coordinateWithValueData,
+    // This API story should have explicit values for all props
+    ...getStoryArgsFromArgsTypesObject(GeneralProps),
+    ...getStoryArgsFromArgsTypesObject(LineStyle),
+    ...getStoryArgsFromArgsTypesObject(ResponsiveProps),
+    ...getStoryArgsFromArgsTypesObject(AnimationProps),
+    isAnimationActive: true,
+    type: 'linear',
+    connectNulls: true,
     stroke: 'red',
     fill: 'teal',
-    isAnimationActive: true,
-  },
-  parameters: { controls: { include: ['stroke', 'fill'] } },
-};
-
-const renderDot = (props: { cx: number; cy: number }) => {
-  const { cx, cy } = props;
-
-  return (
-    <svg x={cx - 10} y={cy - 10} width={20} height={20} fill="green" viewBox="0 0 1024 1024">
-      {/* eslint-disable-next-line max-len */}
-      <path d="M512 1009.984c-274.912 0-497.76-222.848-497.76-497.76s222.848-497.76 497.76-497.76c274.912 0 497.76 222.848 497.76 497.76s-222.848 497.76-497.76 497.76zM340.768 295.936c-39.488 0-71.52 32.8-71.52 73.248s32.032 73.248 71.52 73.248c39.488 0 71.52-32.8 71.52-73.248s-32.032-73.248-71.52-73.248zM686.176 296.704c-39.488 0-71.52 32.8-71.52 73.248s32.032 73.248 71.52 73.248c39.488 0 71.52-32.8 71.52-73.248s-32.032-73.248-71.52-73.248zM772.928 555.392c-18.752-8.864-40.928-0.576-49.632 18.528-40.224 88.576-120.256 143.552-208.832 143.552-85.952 0-164.864-52.64-205.952-137.376-9.184-18.912-31.648-26.592-50.08-17.28-18.464 9.408-21.216 21.472-15.936 32.64 52.8 111.424 155.232 186.784 269.76 186.784 117.984 0 217.12-70.944 269.76-186.784 8.672-19.136 9.568-31.2-9.12-40.096z" />
-    </svg>
-  );
-};
-
-export const CustomizedDot = {
-  ...Simple,
-  args: {
-    data: coordinateWithValueData,
-    isAnimationActive: true,
-    dot: renderDot,
-  },
-};
-
-const renderLabel = (props: { index: number; x: number; y: number }) => {
-  const { index, x, y } = props;
-
-  return (
-    <text key={index} x={x} y={y} className="customized-label">
-      {`${x}, ${y}`}
-    </text>
-  );
-};
-
-export const CustomizedLabel = {
-  ...Simple,
-  args: {
-    data: coordinateWithValueData,
-    isAnimationActive: true,
-    label: renderLabel,
+    strokeDasharray: '4 1',
+    label: { fill: 'red', fontSize: 20 },
+    dot: { stroke: 'green', strokeWidth: 2 },
+    activeDot: { stroke: 'green', strokeWidth: 2 },
+    tooltipType: 'responsive',
+    dataKey: 'uv',
+    unit: ' Visitors',
+    stackId: 1,
   },
 };

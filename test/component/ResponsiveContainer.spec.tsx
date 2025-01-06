@@ -1,6 +1,6 @@
 import React from 'react';
-
-import { render, screen } from '@testing-library/react';
+import { vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
 import { ResponsiveContainer } from '../../src';
 
 declare global {
@@ -26,16 +26,16 @@ describe('<ResponsiveContainer />', () => {
    * This mock also allow us to use {@link notifyResizeObserverChange} to fire changes
    * from inside our test.
    */
-  const resizeObserverMock = jest.fn().mockImplementation(callback => {
+  const resizeObserverMock = vi.fn().mockImplementation(callback => {
     notifyResizeObserverChange = callback;
 
     return {
-      observe: jest.fn().mockImplementation(),
-      unobserve: jest.fn(),
-      disconnect: jest.fn(),
+      observe: vi.fn(),
+      unobserve: vi.fn(),
+      disconnect: vi.fn(),
     };
   });
-  const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
 
   beforeAll(() => {
     delete window.ResizeObserver;
@@ -163,14 +163,16 @@ describe('<ResponsiveContainer />', () => {
     expect(element).not.toHaveAttribute('width');
     expect(element).not.toHaveAttribute('height');
 
-    notifyResizeObserverChange([{ contentRect: { width: 100, height: 100 } }]);
+    act(() => {
+      notifyResizeObserverChange([{ contentRect: { width: 100, height: 100 } }]);
+    });
 
-    expect(element).toHaveAttribute('width', '100');
-    expect(element).toHaveAttribute('height', '100');
+    expect(element.firstElementChild).toHaveAttribute('width', '100');
+    expect(element.firstElementChild).toHaveAttribute('height', '200');
   });
 
   it('should resize when debounced', () => {
-    jest.useFakeTimers('modern');
+    vi.useFakeTimers();
     const { container } = render(
       <ResponsiveContainer id="testing-id-attr" width="100%" height={200} debounce={200}>
         <div data-testid="inside" />
@@ -179,20 +181,22 @@ describe('<ResponsiveContainer />', () => {
 
     const element = container.querySelector('.recharts-responsive-container');
 
-    notifyResizeObserverChange([{ contentRect: { width: 50, height: 50 } }]);
-    jest.advanceTimersByTime(100);
+    act(() => {
+      notifyResizeObserverChange([{ contentRect: { width: 50, height: 50 } }]);
+    });
     expect(element).not.toHaveAttribute('width');
     expect(element).not.toHaveAttribute('height');
 
-    notifyResizeObserverChange([{ contentRect: { width: 100, height: 100 } }]);
-    jest.runAllTimers();
-
-    expect(element).toHaveAttribute('width', '100');
-    expect(element).toHaveAttribute('height', '100');
+    act(() => {
+      notifyResizeObserverChange([{ contentRect: { width: 100, height: 100 } }]);
+      vi.advanceTimersByTime(200);
+    });
+    expect(element.firstElementChild).toHaveAttribute('width', '100');
+    expect(element.firstElementChild).toHaveAttribute('height', '200');
   });
 
   it('should call onResize when ResizeObserver notifies one or many changes', () => {
-    const onResize = jest.fn();
+    const onResize = vi.fn();
 
     const { container } = render(
       <ResponsiveContainer width="100%" height={200} onResize={onResize}>
@@ -204,20 +208,24 @@ describe('<ResponsiveContainer />', () => {
     expect(element).not.toHaveAttribute('width');
     expect(element).not.toHaveAttribute('height');
 
-    notifyResizeObserverChange([{ contentRect: { width: 100, height: 100 } }]);
+    act(() => {
+      notifyResizeObserverChange([{ contentRect: { width: 100, height: 100 } }]);
+    });
 
-    expect(element).toHaveAttribute('width', '100');
-    expect(element).toHaveAttribute('height', '100');
+    expect(element.firstElementChild).toHaveAttribute('width', '100');
+    expect(element.firstElementChild).toHaveAttribute('height', '200');
 
     expect(onResize).toHaveBeenCalledTimes(1);
 
-    notifyResizeObserverChange([{ contentRect: { width: 200, height: 200 } }]);
+    act(() => {
+      notifyResizeObserverChange([{ contentRect: { width: 200, height: 200 } }]);
+    });
 
     expect(onResize).toHaveBeenCalledTimes(2);
   });
 
   it('should have a min-width of 0 when no minWidth is set', () => {
-    const onResize = jest.fn();
+    const onResize = vi.fn();
 
     const { container } = render(
       <ResponsiveContainer width="100%" height={200} onResize={onResize}>
@@ -230,8 +238,39 @@ describe('<ResponsiveContainer />', () => {
     expect(element).toHaveStyle({ width: '100%', height: '200px', 'min-width': '0' });
   });
 
+  it('should accept and render the style prop if it is set', () => {
+    // looks like the ResponsiveContainer style.color prop converts from string to RGB representation
+    // i.e. style.color = 'red' gets converted to rgb(255,0,0)
+    // I checked and changing style.color from 'red' to 'blue' changed the resulting style from
+    // rgb(255,0,0) to rgb(0,0,255) as expected
+    const { container } = render(
+      <ResponsiveContainer style={{ color: 'red', backgroundColor: '#FF00FF' }} data-testid="container">
+        <div data-testid="inside" />
+      </ResponsiveContainer>,
+    );
+    const responsiveContainer = container.getElementsByClassName('recharts-responsive-container');
+    expect(responsiveContainer).toHaveLength(1);
+    expect(responsiveContainer[0]).toHaveStyle('background-color: rgb(255, 0, 255)');
+    expect(responsiveContainer[0]).toHaveStyle('color: rgb(255,0,0)');
+  });
+
+  it('should accept and render the style prop and any other specified outside of it', () => {
+    const { container } = render(
+      <ResponsiveContainer style={{ backgroundColor: 'red', color: 'red' }} width={100} height={100}>
+        <div data-testid="inside" />
+      </ResponsiveContainer>,
+    );
+
+    expect(container.querySelector('.recharts-responsive-container')).toHaveStyle({
+      width: '100px',
+      height: '100px',
+      'background-color': 'rgb(255,0,0)',
+      color: 'rgb(255,0,0)',
+    });
+  });
+
   it('should have a min-width of 200px when minWidth is 200', () => {
-    const onResize = jest.fn();
+    const onResize = vi.fn();
 
     const { container } = render(
       <ResponsiveContainer width="100%" height={200} minWidth={200} onResize={onResize}>
@@ -242,5 +281,26 @@ describe('<ResponsiveContainer />', () => {
     const element = container.querySelector('.recharts-responsive-container');
 
     expect(element).toHaveStyle({ width: '100%', height: '200px', 'min-width': '200px' });
+  });
+
+  it('should trigger console.warn only when accessing ref.current.current, not ref.current', () => {
+    const ref = React.createRef<any>();
+
+    const consoleWarn = vi.fn();
+    vi.spyOn(console, 'warn').mockImplementation(consoleWarn);
+
+    render(
+      <ResponsiveContainer height={100} ref={ref}>
+        <div data-testid="inside" />
+      </ResponsiveContainer>,
+    );
+
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(ref.current instanceof HTMLElement).toBe(true);
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(ref.current.current instanceof HTMLElement).toBe(true);
+    expect(consoleWarn).toHaveBeenLastCalledWith(
+      'The usage of ref.current.current is deprecated and will no longer be supported.',
+    );
   });
 });

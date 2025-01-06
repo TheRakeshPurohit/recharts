@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import React from 'react';
+import { vi } from 'vitest';
 import { Surface, Text } from '../../src';
 
 describe('<Text />', () => {
@@ -12,9 +13,9 @@ describe('<Text />', () => {
     right: 10,
     bottom: 10,
     left: 10,
-    toJSON: jest.fn(),
+    toJSON: vi.fn(),
   };
-  Element.prototype.getBoundingClientRect = jest.fn(() => mock);
+  Element.prototype.getBoundingClientRect = vi.fn(() => mock);
 
   test('Does not wrap long text if enough width', () => {
     render(
@@ -46,7 +47,7 @@ describe('<Text />', () => {
   });
 
   test('Wraps long text if styled but would have had enough room', () => {
-    Element.prototype.getBoundingClientRect = jest.fn(() => ({ ...mock, width: 40 }));
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({ ...mock, width: 40 }));
     render(
       <Surface width={300} height={200}>
         <Text role="img" width={300} style={{ fontSize: '2em', fontFamily: 'Courier' }}>
@@ -62,21 +63,28 @@ describe('<Text />', () => {
   });
 
   test('Does not perform word length calculation if width or scaleToFit props not set', () => {
-    render(<Text role="img">This is really long text</Text>);
+    render(
+      <Surface width={300} height={200}>
+        <Text role="img">This is really long text</Text>
+      </Surface>,
+    );
 
     const text = screen.getByRole('img');
     expect(text).toBeInTheDocument();
 
     expect(text?.children).toHaveLength(1);
     // we know that the children that get rendered under `text` are `tspan` - this is a safe cast if we get a result
-    expect((text?.children[0] as SVGTSpanElement).attributes).not.toContain('transform');
+    const { transform } = (text?.children[0] as SVGTSpanElement).attributes as NamedNodeMap & { transform: unknown };
+    expect(transform).toBeUndefined();
   });
 
   test('Render 0 successfully when width is specified', () => {
     render(
-      <Text role="img" x={0} y={0} width={30}>
-        {0}
-      </Text>,
+      <Surface width={300} height={200}>
+        <Text role="img" x={0} y={0} width={30}>
+          {0}
+        </Text>
+      </Surface>,
     );
 
     const text = screen.getByRole('img');
@@ -89,9 +97,11 @@ describe('<Text />', () => {
 
   test('Render 0 successfully when width is not specified', () => {
     render(
-      <Text role="img" x={0} y={0}>
-        {0}
-      </Text>,
+      <Surface width={300} height={200}>
+        <Text role="img" x={0} y={0}>
+          {0}
+        </Text>
+      </Surface>,
     );
 
     const text = screen.getByRole('img');
@@ -104,9 +114,11 @@ describe('<Text />', () => {
 
   test('Render text when x or y is a percentage', () => {
     render(
-      <Text role="img" x="50%" y="50%">
-        anything
-      </Text>,
+      <Surface width={300} height={200}>
+        <Text role="img" x="50%" y="50%">
+          anything
+        </Text>
+      </Surface>,
     );
 
     const text = screen.getByRole('img');
@@ -119,9 +131,11 @@ describe('<Text />', () => {
 
   test("Don't Render text when x or y is NaN", () => {
     render(
-      <Text role="img" x={NaN} y={10}>
-        anything
-      </Text>,
+      <Surface width={300} height={200}>
+        <Text role="img" x={NaN} y={10}>
+          anything
+        </Text>
+      </Surface>,
     );
 
     const text = screen.queryByRole('img');
@@ -131,9 +145,11 @@ describe('<Text />', () => {
   test('Only split contents on breaking spaces', () => {
     const testString = 'These spaces\tshould\nbreak,\rbut\xA0these\xA0should\xA0not.';
     render(
-      <Text role="img" width="auto">
-        {testString}
-      </Text>,
+      <Surface width={300} height={200}>
+        <Text role="img" width="auto">
+          {testString}
+        </Text>
+      </Surface>,
     );
 
     const text = screen.getByRole('img');
@@ -145,14 +161,18 @@ describe('<Text />', () => {
   describe('maxLines', () => {
     test('does not do anything when maxLines are not exceeded', () => {
       render(
-        <Text role="img" width={500} maxLines={3}>
-          test
-        </Text>,
+        <Surface width={300} height={200}>
+          <Text role="img" width={500} maxLines={3}>
+            test
+          </Text>
+        </Surface>,
       );
       render(
-        <Text role="img" width={500}>
-          test
-        </Text>,
+        <Surface width={300} height={200}>
+          <Text role="img" width={500}>
+            test
+          </Text>
+        </Surface>,
       );
 
       const text = screen.getAllByRole('img');
@@ -166,9 +186,11 @@ describe('<Text />', () => {
         Nihil amet in itaque error velit. Corporis autem sequi aut temporibus placeat.
         Perferendis quos veritatis quasi pariatur!`;
       render(
-        <Text role="img" width={200} maxLines={2}>
-          {testString}
-        </Text>,
+        <Surface width={300} height={200}>
+          <Text role="img" width={200} maxLines={2}>
+            {testString}
+          </Text>
+        </Surface>,
       );
 
       const text = screen.getByRole('img');
@@ -182,9 +204,11 @@ describe('<Text />', () => {
         facilis debitis Provident impedit a distinctio neque quaerat Optio quo quibusdam possimus
         provident accusantium. Molestiae similique nemo labore`;
       render(
-        <Text role="img" width={200} maxLines={2}>
-          {testString}
-        </Text>,
+        <Surface width={300} height={200}>
+          <Text role="img" width={200} maxLines={2}>
+            {testString}
+          </Text>
+        </Surface>,
       );
 
       const text = screen.getByRole('img');
@@ -196,7 +220,7 @@ describe('<Text />', () => {
     });
 
     // test('adds an ellipsis at the end of a very long word', () => {
-    //   Element.prototype.getBoundingClientRect = jest.fn(() => ({ ...mock, width: 1 }));
+    //   Element.prototype.getBoundingClientRect = vi.fn(() => ({ ...mock, width: 1 }));
     //   const testString =
     //     'longwooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooord';
     //   render(

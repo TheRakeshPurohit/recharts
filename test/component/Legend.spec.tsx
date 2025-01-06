@@ -1,8 +1,19 @@
 import React from 'react';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import { vi } from 'vitest';
 import { Legend, LineChart, Line } from '../../src';
+import { mockGetBoundingClientRect, mockHTMLElementProperty } from '../helper/elementMockHelper';
 
 describe('<Legend />', () => {
+  const mockRect = {
+    width: 300,
+    height: 30,
+  };
+  const scale = 2;
+  beforeAll(() => mockGetBoundingClientRect(mockRect));
+  beforeAll(() => mockHTMLElementProperty('offsetHeight', mockRect.height * scale));
+  beforeAll(() => mockHTMLElementProperty('offsetWidth', mockRect.width * scale));
+
   const data = [
     { value: 'Apple', color: '#ff7300' },
     { value: 'Samsung', color: '#bb7300' },
@@ -53,7 +64,7 @@ describe('<Legend />', () => {
     expect(container.querySelectorAll('.recharts-default-legend .recharts-legend-item line')).toHaveLength(2);
   });
 
-  test('Does not render `strokeDasharray` (if not present) in Legend when iconType is set to something else than `plainline`', () => {
+  test('Does not render `strokeDasharray` (if not present) when iconType is not set to `plainline`', () => {
     const { container } = render(
       <LineChart width={600} height={300} data={data}>
         <Legend iconType="line" />
@@ -66,5 +77,70 @@ describe('<Legend />', () => {
     expect(container.querySelectorAll('.recharts-default-legend .recharts-legend-item')).toHaveLength(2);
     expect(container.querySelectorAll('.recharts-default-legend .recharts-legend-item path')).toHaveLength(2);
     expect(container.querySelectorAll('.recharts-default-legend .recharts-legend-item line')).toHaveLength(0);
+  });
+
+  test('Renders payload value correctly when passed as a static value', () => {
+    render(<Legend payload={[{ value: 'item name' }]} />);
+    screen.getByText(/item name/i);
+  });
+
+  test('Renders name value of siblings when dataKey is a function', () => {
+    render(
+      <LineChart width={500} height={500} data={data}>
+        <Legend />
+        <Line dataKey={row => row.value} name="My Line Data" />
+        <Line dataKey={row => row.color} name="My Other Line Data" />
+      </LineChart>,
+    );
+
+    // Select the text that was passed into the siblings as a name prop, but rendered in the Legend component.
+    screen.getByText(/My Line Data/i);
+    screen.getByText(/My Other Line Data/i);
+  });
+
+  test('Legend defaults are read correctly', () => {
+    const { container } = render(
+      <LineChart width={500} height={500} data={data}>
+        <Legend />
+        <Line dataKey={row => row.value} name="My Line Data" />
+        <Line dataKey={row => row.color} name="My Other Line Data" />
+      </LineChart>,
+    );
+
+    const legendWrapper = container.getElementsByClassName('recharts-legend-wrapper')[0];
+    expect(legendWrapper).not.toHaveStyle({ width: 'auto' });
+    const legendItem = container.getElementsByClassName('legend-item-0')[0];
+    const surface = legendItem.getElementsByClassName('recharts-surface')[0];
+    expect(surface.getAttribute('height')).toBe('14');
+  });
+
+  test(`Renders '' if sibling's dataKey is a function and name is not provided`, () => {
+    // Warning should be logged. Spy on it so we can confirm it was called.
+    const consoleWarn = vi.spyOn(console, 'warn');
+
+    render(
+      <LineChart width={500} height={500} data={data}>
+        <Legend />
+        <Line dataKey={row => row.value} />
+        <Line dataKey={row => row.color} />
+      </LineChart>,
+    );
+
+    const legendItems = screen.getAllByRole('listitem');
+    legendItems.forEach(item => {
+      expect(item).toHaveTextContent('');
+    });
+
+    expect(consoleWarn).toHaveBeenCalledWith(
+      'The name property is also required when using ' +
+        "a function for the dataKey of a chart's cartesian components. " +
+        'Ex: <Bar name="Name of my Data"/>',
+    );
+  });
+  test('it should get the correct BBox when scale', () => {
+    const handleUpdate = vi.fn();
+    render(<Legend height={30} width={300} onBBoxUpdate={handleUpdate} />);
+    expect(handleUpdate.mock.calls[0][0].height).toEqual(mockRect.height * scale);
+    expect(handleUpdate.mock.calls[0][0].width).toEqual(mockRect.width * scale);
   });
 });

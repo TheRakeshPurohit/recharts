@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import React from 'react';
 
 import { Label, Line, LineChart, ReferenceLine, Surface } from '../../src';
+import { cleanupMockAnimation, mockAnimation } from '../helper/animation-frame-helper';
 
 const data = [
   { name: 'Page A', uv: 400, pv: 2400, amt: 2400 },
@@ -123,5 +124,36 @@ describe('<Label />', () => {
       </LineChart>,
     );
     expect(container.querySelectorAll('.recharts-line .recharts-line-curve').length).toEqual(1);
+  });
+
+  it('Renders label by label props with animation disabled', () => {
+    const { container } = render(
+      <LineChart width={400} height={400} data={data} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+        <Line
+          type="monotone"
+          dataKey="uv"
+          stroke="#ff7300"
+          label={{ value: 'hello', position: 'center' }}
+          isAnimationActive={false}
+        />
+      </LineChart>,
+    );
+
+    expect(container.querySelectorAll('.recharts-line .recharts-line-curve').length).toEqual(1);
+    expect(screen.getByText(/400/i)).toBeInTheDocument();
+  });
+
+  it('Renders label by label props with animation enabled', () => {
+    mockAnimation();
+    const { container } = render(
+      <LineChart width={400} height={400} data={data} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+        <Line type="monotone" dataKey="uv" stroke="#ff7300" label={{ value: 'hello', position: 'center' }} />
+      </LineChart>,
+    );
+
+    expect(container.querySelectorAll('.recharts-line .recharts-line-curve').length).toEqual(1);
+    expect(screen.getByText(/400/i)).toBeInTheDocument();
+
+    cleanupMockAnimation();
   });
 });

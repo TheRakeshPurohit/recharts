@@ -1,7 +1,9 @@
-import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { Brush, LineChart, Line, BarChart } from '../../src';
-import { mockMouseEvent } from '../helper/mockMouseEvent';
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+import React, { useState } from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Brush, LineChart, Line, BarChart, ComposedChart, ReferenceLine } from '../../src';
+import { assertNotNull } from '../helper/assertNotNull';
 
 describe('<Brush />', () => {
   const data = [
@@ -60,10 +62,9 @@ describe('<Brush />', () => {
       </BarChart>,
     );
 
-    const brushSlide = container.querySelector('.recharts-brush-slide');
+    const brushSlide = container.querySelector('.recharts-brush-slide') as SVGRectElement;
+    fireEvent.mouseOver(brushSlide, { pageX: 0, pageY: 0 });
 
-    const mouseOverEvent = mockMouseEvent('mouseover', brushSlide!, { pageX: 0, pageY: 0 });
-    mouseOverEvent.fire();
     expect(container.querySelectorAll('.recharts-brush-texts')).toHaveLength(1);
     expect(screen.getAllByText(data[0].date)).toHaveLength(1);
     expect(screen.getAllByText(data[data.length - 1].date)).toHaveLength(1);
@@ -87,17 +88,15 @@ describe('<Brush />', () => {
     );
 
     const brushSlide = container.querySelector('.recharts-brush-slide');
+    assertNotNull(brushSlide);
+    fireEvent.mouseDown(brushSlide);
 
-    const mouseDownEvent = mockMouseEvent('mousedown', brushSlide!, { pageX: 0, pageY: 0 });
-    mouseDownEvent.fire();
     expect(container.querySelectorAll('.recharts-brush-texts')).toHaveLength(1);
     expect(screen.getAllByText(data[0].date)).toHaveLength(1);
     expect(screen.getAllByText(data[data.length - 1].date)).toHaveLength(1);
 
     fireEvent.mouseUp(window);
 
-    const mouseMoveEvent = mockMouseEvent('mousemove', window, { pageX: 0, pageY: 0 });
-    mouseMoveEvent.fire();
     expect(container.querySelectorAll('.recharts-brush-texts')).toHaveLength(0);
   });
 
@@ -109,5 +108,172 @@ describe('<Brush />', () => {
     );
 
     expect(container.querySelectorAll('.recharts-layer.recharts-brush-texts')).toHaveLength(1);
+  });
+
+  describe('Brush a11y features', () => {
+    test('Brush travellers should be marked up correctly', () => {
+      const { container } = render(
+        <BarChart width={400} height={100} data={data}>
+          <Brush dataKey="value" x={100} y={50} width={400} height={40} />
+        </BarChart>,
+      );
+
+      const travellers = container.querySelectorAll('.recharts-brush-traveller');
+      expect(travellers).toHaveLength(2);
+      travellers.forEach(travellerElement => {
+        // tabIndex=0 is necessary for a keyboard user to tab to an element.
+        // If this fails, the component ceases to be accessible in any way.
+        expect(travellerElement).toHaveProperty('tabIndex', 0);
+      });
+    });
+
+    test('Brush text should appear while travellers are in focus', async () => {
+      const { container } = render(
+        <BarChart width={400} height={100} data={data}>
+          <Brush dataKey="value" x={100} y={50} width={400} height={40} />
+        </BarChart>,
+      );
+
+      // By default, no text should appear
+      expect(container.querySelector('.recharts-brush-texts')).toBeNull();
+
+      // After focusing on a traveller, the text should appear
+      const traveller = container.querySelector('.recharts-brush-traveller') as SVGGElement;
+      fireEvent.focus(traveller);
+
+      await waitFor(() => {
+        expect(container.querySelector('.recharts-brush-texts')).not.toBeNull();
+      });
+
+      // After blurring that traveller, the text should disappear again
+      fireEvent.blur(traveller);
+
+      await waitFor(() => {
+        expect(container.querySelector('.recharts-brush-texts')).toBeNull();
+      });
+    });
+
+    test('Travellers should move when valid keyboard events are fired', async () => {
+      const { container } = render(
+        <BarChart width={400} height={100} data={data}>
+          <Brush dataKey="value" x={100} y={50} width={400} height={40} />
+        </BarChart>,
+      );
+
+      const traveller = container.querySelector('.recharts-brush-traveller') as SVGGElement;
+      fireEvent.focus(traveller);
+
+      await waitFor(() => {
+        expect(container.querySelector('.recharts-brush-texts')).not.toBeNull();
+      });
+
+      const text = container.querySelector('.recharts-brush-texts text[text-anchor="end"]') as SVGGElement;
+      expect(text?.textContent).toBe('10');
+
+      fireEvent.keyDown(traveller, {
+        key: 'ArrowRight',
+      });
+      await waitFor(() => {
+        expect(text.textContent).toBe('20');
+      });
+
+      fireEvent.keyDown(traveller, {
+        key: 'ArrowLeft',
+      });
+      await waitFor(() => {
+        expect(text.textContent).toBe('10');
+      });
+    });
+
+    const ControlledPanoramicBrush = () => {
+      const [startIndex, setStartIndex] = useState<number | undefined>(3);
+      const [endIndex, setEndIndex] = useState<number | undefined>(data.length - 1);
+
+      return (
+        <>
+          <ComposedChart data={data} height={400} width={400}>
+            <Line dataKey="value" isAnimationActive={false} />
+            <ReferenceLine y={30} />
+
+            <Brush
+              startIndex={startIndex}
+              endIndex={endIndex}
+              onChange={e => {
+                setEndIndex(e.endIndex);
+                setStartIndex(e.startIndex);
+              }}
+              alwaysShowText
+            >
+              <ComposedChart>
+                <Line dataKey="value" isAnimationActive={false} />
+                <ReferenceLine y={30} />
+              </ComposedChart>
+            </Brush>
+          </ComposedChart>
+          <input
+            type="number"
+            aria-label="startIndex"
+            value={startIndex}
+            onChange={evt => {
+              const num = Number(evt.target.value);
+              if (Number.isInteger(num)) setStartIndex(num);
+            }}
+          />
+          <input
+            aria-label="endIndex"
+            value={endIndex}
+            onChange={evt => {
+              const num = Number(evt.target.value);
+              if (Number.isInteger(num)) setEndIndex(num);
+            }}
+          />
+        </>
+      );
+    };
+
+    test('Travellers should move and chart should update when brush start and end indexes are controlled', async () => {
+      const user = userEvent.setup();
+      const { container } = render(<ControlledPanoramicBrush />);
+
+      const traveller = container.querySelector('.recharts-brush-traveller') as SVGGElement;
+      fireEvent.focus(traveller);
+
+      const startIndexInput = screen.getByLabelText<HTMLInputElement>('startIndex');
+      const endIndexInput = screen.getByLabelText<HTMLInputElement>('endIndex');
+
+      await user.clear(startIndexInput);
+      await user.type(startIndexInput, '2');
+      await user.clear(endIndexInput);
+      await user.type(endIndexInput, '5');
+
+      const brushTexts = container.getElementsByClassName('recharts-brush-texts').item(0)!.children;
+      expect(brushTexts.item(0)).toBeInTheDocument();
+
+      expect(brushTexts.item(0)?.textContent).toContain('2');
+      expect(brushTexts.item(1)?.textContent).toContain('5');
+    });
+
+    test('Should render panorama in brush', async () => {
+      const { container } = render(<ControlledPanoramicBrush />);
+
+      const svgs = container.getElementsByTagName('svg');
+      expect(svgs).toHaveLength(2);
+
+      const lines = container.getElementsByClassName('recharts-line');
+      expect(lines).toHaveLength(2);
+
+      const referenceLines = container.getElementsByClassName('recharts-reference-line-line');
+      expect(referenceLines).toHaveLength(2);
+
+      const chartReferenceLineY1 = referenceLines[0].getAttribute('y1');
+      const chartReferenceLineY2 = referenceLines[0].getAttribute('y2');
+
+      const panoReferenceLineY1 = referenceLines[1].getAttribute('y1');
+      const panoReferenceLineY2 = referenceLines[1].getAttribute('y2');
+
+      // reference lines should be created on different scales and therefore have different values
+      expect(chartReferenceLineY1).not.toEqual(panoReferenceLineY1);
+      expect(chartReferenceLineY2).not.toEqual(panoReferenceLineY2);
+    });
   });
 });

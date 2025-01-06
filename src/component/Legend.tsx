@@ -2,32 +2,21 @@
  * @fileOverview Legend
  */
 import React, { PureComponent, CSSProperties } from 'react';
-import _ from 'lodash';
 import { DefaultLegendContent, Payload, Props as DefaultProps, ContentType } from './DefaultLegendContent';
 
 import { isNumber } from '../util/DataUtils';
+import { LayoutType } from '../util/types';
+import { UniqueOption, getUniqPayload } from '../util/payload/getUniqPayload';
 
-type UniqueOption = boolean | ((entry: Payload) => Payload);
 function defaultUniqBy(entry: Payload) {
   return entry.value;
-}
-function getUniqPayload(option: UniqueOption, payload: Array<Payload>) {
-  if (option === true) {
-    return _.uniqBy(payload, defaultUniqBy);
-  }
-
-  if (_.isFunction(option)) {
-    return _.uniqBy(payload, option);
-  }
-
-  return payload;
 }
 
 function renderContent(content: ContentType, props: Props) {
   if (React.isValidElement(content)) {
     return React.cloneElement(content, props);
   }
-  if (_.isFunction(content)) {
+  if (typeof content === 'function') {
     return React.createElement(content as any, props);
   }
 
@@ -50,7 +39,7 @@ export type Props = DefaultProps & {
     bottom?: number;
     right?: number;
   };
-  payloadUniqBy?: UniqueOption;
+  payloadUniqBy?: UniqueOption<Payload>;
   onBBoxUpdate?: (box: DOMRect | null) => void;
 };
 
@@ -71,8 +60,11 @@ export class Legend extends PureComponent<Props, State> {
 
   private wrapperNode: HTMLDivElement;
 
-  static getWithHeight(item: any, chartWidth: number) {
-    const { layout } = item.props;
+  static getWithHeight(
+    item: { props: { layout?: LayoutType; height?: number; width?: number } },
+    chartWidth: number,
+  ): null | { height: number } | { width: number } {
+    const { layout } = { ...this.defaultProps, ...item.props };
 
     if (layout === 'vertical' && isNumber(item.props.height)) {
       return {
@@ -88,9 +80,9 @@ export class Legend extends PureComponent<Props, State> {
     return null;
   }
 
-  state = {
-    boxWidth: -1,
-    boxHeight: -1,
+  lastBoundingBox = {
+    width: -1,
+    height: -1,
   };
 
   public componentDidMount() {
@@ -103,20 +95,43 @@ export class Legend extends PureComponent<Props, State> {
 
   public getBBox() {
     if (this.wrapperNode && this.wrapperNode.getBoundingClientRect) {
-      return this.wrapperNode.getBoundingClientRect();
+      const box = this.wrapperNode.getBoundingClientRect();
+      box.height = this.wrapperNode.offsetHeight;
+      box.width = this.wrapperNode.offsetWidth;
+      return box;
     }
-
     return null;
   }
 
-  private getBBoxSnapshot() {
-    const { boxWidth, boxHeight } = this.state;
+  private updateBBox() {
+    const { onBBoxUpdate } = this.props;
+    const box = this.getBBox();
+    if (box) {
+      if (
+        Math.abs(box.width - this.lastBoundingBox.width) > EPS ||
+        Math.abs(box.height - this.lastBoundingBox.height) > EPS
+      ) {
+        this.lastBoundingBox.width = box.width;
+        this.lastBoundingBox.height = box.height;
+        if (onBBoxUpdate) {
+          onBBoxUpdate(box);
+        }
+      }
+    } else if (this.lastBoundingBox.width !== -1 || this.lastBoundingBox.height !== -1) {
+      this.lastBoundingBox.width = -1;
+      this.lastBoundingBox.height = -1;
+      if (onBBoxUpdate) {
+        onBBoxUpdate(null);
+      }
+    }
+  }
 
-    if (boxWidth >= 0 && boxHeight >= 0) {
-      return { width: boxWidth, height: boxHeight };
+  private getBBoxSnapshot() {
+    if (this.lastBoundingBox.width >= 0 && this.lastBoundingBox.height >= 0) {
+      return { ...this.lastBoundingBox };
     }
 
-    return null;
+    return { width: 0, height: 0 };
   }
 
   private getDefaultPosition(style: CSSProperties) {
@@ -128,7 +143,7 @@ export class Legend extends PureComponent<Props, State> {
       ((style.left === undefined || style.left === null) && (style.right === undefined || style.right === null))
     ) {
       if (align === 'center' && layout === 'vertical') {
-        const box = this.getBBoxSnapshot() || { width: 0 };
+        const box = this.getBBoxSnapshot();
         hPos = { left: ((chartWidth || 0) - box.width) / 2 };
       } else {
         hPos = align === 'right' ? { right: (margin && margin.right) || 0 } : { left: (margin && margin.left) || 0 };
@@ -140,7 +155,7 @@ export class Legend extends PureComponent<Props, State> {
       ((style.top === undefined || style.top === null) && (style.bottom === undefined || style.bottom === null))
     ) {
       if (verticalAlign === 'middle') {
-        const box = this.getBBoxSnapshot() || { height: 0 };
+        const box = this.getBBoxSnapshot();
         vPos = { top: ((chartHeight || 0) - box.height) / 2 };
       } else {
         vPos =
@@ -151,41 +166,6 @@ export class Legend extends PureComponent<Props, State> {
     }
 
     return { ...hPos, ...vPos };
-  }
-
-  private updateBBox() {
-    const { boxWidth, boxHeight } = this.state;
-    const { onBBoxUpdate } = this.props;
-
-    if (this.wrapperNode && this.wrapperNode.getBoundingClientRect) {
-      const box = this.wrapperNode.getBoundingClientRect();
-
-      if (Math.abs(box.width - boxWidth) > EPS || Math.abs(box.height - boxHeight) > EPS) {
-        this.setState(
-          {
-            boxWidth: box.width,
-            boxHeight: box.height,
-          },
-          () => {
-            if (onBBoxUpdate) {
-              onBBoxUpdate(box);
-            }
-          },
-        );
-      }
-    } else if (boxWidth !== -1 || boxHeight !== -1) {
-      this.setState(
-        {
-          boxWidth: -1,
-          boxHeight: -1,
-        },
-        () => {
-          if (onBBoxUpdate) {
-            onBBoxUpdate(null);
-          }
-        },
-      );
-    }
   }
 
   public render() {
@@ -206,7 +186,7 @@ export class Legend extends PureComponent<Props, State> {
           this.wrapperNode = node;
         }}
       >
-        {renderContent(content, { ...this.props, payload: getUniqPayload(payloadUniqBy, payload) })}
+        {renderContent(content, { ...this.props, payload: getUniqPayload(payload, payloadUniqBy, defaultUniqBy) })}
       </div>
     );
   }

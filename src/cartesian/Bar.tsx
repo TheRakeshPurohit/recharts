@@ -1,13 +1,14 @@
 /**
  * @fileOverview Render a group of bar
  */
-import React, { PureComponent, ReactElement } from 'react';
-import classNames from 'classnames';
+import React, { Key, PureComponent, ReactElement } from 'react';
+import clsx from 'clsx';
 import Animate from 'react-smooth';
-import _ from 'lodash';
-import { Rectangle, Props as RectangleProps } from '../shape/Rectangle';
+import isEqual from 'lodash/isEqual';
+import isNil from 'lodash/isNil';
+import { Props as RectangleProps } from '../shape/Rectangle';
 import { Layer } from '../container/Layer';
-import { ErrorBar, Props as ErrorBarProps } from './ErrorBar';
+import { ErrorBar, Props as ErrorBarProps, ErrorBarDataPointFormatter } from './ErrorBar';
 import { Cell } from '../component/Cell';
 import { LabelList } from '../component/LabelList';
 import { uniqueId, mathSign, interpolateNumber } from '../util/DataUtils';
@@ -33,11 +34,14 @@ import {
   TickItem,
   adaptEventsOfChild,
   PresentationAttributesAdaptChildEvent,
+  AnimationDuration,
+  ActiveShape,
 } from '../util/types';
 import { ImplicitLabelType } from '../component/Label';
+import { BarRectangle, MinPointSize, minPointSizeCallback } from '../util/BarUtils';
 
-interface BarRectangleItem extends RectangleProps {
-  value?: number;
+export interface BarRectangleItem extends RectangleProps {
+  value?: number | [number, number];
   /** the coordinate of background rectangle */
   background?: {
     x?: number;
@@ -53,46 +57,43 @@ interface InternalBarProps {
   data?: BarRectangleItem[];
   top?: number;
   left?: number;
+  width?: number;
+  height?: number;
 }
 
-type RectangleShapeType =
-  | ReactElement<SVGElement>
-  | ((props: any) => ReactElement<SVGElement>)
-  | RectangleProps
-  | boolean;
-
-interface BarProps extends InternalBarProps {
+export interface BarProps extends InternalBarProps {
   className?: string;
+  index?: Key;
+  activeIndex?: number;
   layout?: 'horizontal' | 'vertical';
   xAxisId?: string | number;
   yAxisId?: string | number;
   stackId?: string | number;
-  barSize?: number;
+  barSize?: string | number;
   unit?: string | number;
   name?: string | number;
   dataKey: DataKey<any>;
   tooltipType?: TooltipType;
   legendType?: LegendType;
-  minPointSize?: number;
+  minPointSize?: MinPointSize;
   maxBarSize?: number;
   hide?: boolean;
-  shape?: ReactElement<SVGElement> | ((props: any) => ReactElement<SVGElement>);
-  background?: RectangleShapeType;
+  shape?: ActiveShape<BarProps, SVGPathElement>;
+  activeBar?: ActiveShape<BarProps, SVGPathElement>;
+  background?: ActiveShape<BarProps, SVGPathElement>;
   radius?: number | [number, number, number, number];
-
   onAnimationStart?: () => void;
   onAnimationEnd?: () => void;
-
   isAnimationActive?: boolean;
   animationBegin?: number;
-  animationDuration?: number;
+  animationDuration?: AnimationDuration;
   animationEasing?: AnimationTiming;
   animationId?: number;
   id?: string;
   label?: ImplicitLabelType;
 }
 
-export type Props = Omit<PresentationAttributesAdaptChildEvent<any, SVGPathElement>, 'radius'> & BarProps;
+export type Props = Omit<PresentationAttributesAdaptChildEvent<any, SVGPathElement>, 'radius' | 'name'> & BarProps;
 
 interface State {
   readonly isAnimationFinished?: boolean;
@@ -110,9 +111,9 @@ export class Bar extends PureComponent<Props, State> {
     legendType: 'rect',
     minPointSize: 0,
     hide: false,
-    // data of bar
     data: [] as BarRectangleItem[],
     layout: 'vertical',
+    activeBar: false,
     isAnimationActive: !Global.isSsr,
     animationBegin: 0,
     animationDuration: 400,
@@ -144,14 +145,14 @@ export class Bar extends PureComponent<Props, State> {
     offset,
   }: {
     props: Props;
-    item: Bar;
+    item: ReactElement;
     barPosition: any;
     bandSize: number;
     xAxis: InternalBarProps['xAxis'];
     yAxis: InternalBarProps['yAxis'];
     xAxisTicks: TickItem[];
     yAxisTicks: TickItem[];
-    stackedData: number[][];
+    stackedData: Array<[number, number]>;
     dataStartIndex: number;
     offset: ChartOffset;
     displayedData: any[];
@@ -162,12 +163,13 @@ export class Bar extends PureComponent<Props, State> {
     }
 
     const { layout } = props;
-    const { dataKey, children, minPointSize } = item.props;
+    const itemDefaultProps = (item.type as any).defaultProps;
+    const itemProps = itemDefaultProps !== undefined ? { ...itemDefaultProps, ...item.props } : item.props;
+    const { dataKey, children, minPointSize: minPointSizeProp } = itemProps;
     const numericAxis = layout === 'horizontal' ? yAxis : xAxis;
     const stackedDomain = stackedData ? numericAxis.scale.domain() : null;
     const baseValue = getBaseValueOfBar({ numericAxis });
     const cells = findAllByType(children, Cell);
-
     const rects = displayedData.map((entry, index) => {
       let value, x, y, width, height, background;
 
@@ -176,10 +178,12 @@ export class Bar extends PureComponent<Props, State> {
       } else {
         value = getValueByDataKey(entry, dataKey);
 
-        if (!_.isArray(value)) {
+        if (!Array.isArray(value)) {
           value = [baseValue, value];
         }
       }
+
+      const minPointSize = minPointSizeCallback(minPointSizeProp, this.defaultProps.minPointSize)(value[1], index);
 
       if (layout === 'horizontal') {
         const [baseValueScale, currentValueScale] = [yAxis.scale(value[0]), yAxis.scale(value[1])];
@@ -281,37 +285,32 @@ export class Bar extends PureComponent<Props, State> {
     }
   };
 
-  static renderRectangle(option: RectangleShapeType, props: any) {
-    let rectangle;
-
-    if (React.isValidElement(option)) {
-      rectangle = React.cloneElement(option, props);
-    } else if (_.isFunction(option)) {
-      rectangle = option(props);
-    } else {
-      rectangle = <Rectangle {...props} />;
-    }
-
-    return rectangle;
-  }
-
   renderRectanglesStatically(data: BarRectangleItem[]) {
-    const { shape } = this.props;
-    const baseProps = filterProps(this.props);
+    const { shape, dataKey, activeIndex, activeBar } = this.props;
+    const baseProps = filterProps(this.props, false);
 
     return (
       data &&
       data.map((entry, i) => {
-        const props = { ...baseProps, ...entry, index: i };
-
+        const isActive = i === activeIndex;
+        const option = isActive ? activeBar : shape;
+        const props = {
+          ...baseProps,
+          ...entry,
+          isActive,
+          option,
+          index: i,
+          dataKey,
+          onAnimationStart: this.handleAnimationStart,
+          onAnimationEnd: this.handleAnimationEnd,
+        };
         return (
           <Layer
             className="recharts-bar-rectangle"
             {...adaptEventsOfChild(this.props, entry, i)}
-            key={`rectangle-${i}`} // eslint-disable-line react/no-array-index-key
-            role="img"
+            key={`rectangle-${entry?.x}-${entry?.y}-${entry?.value}`}
           >
-            {Bar.renderRectangle(shape, props)}
+            <BarRectangle {...props} />
           </Layer>
         );
       })
@@ -381,7 +380,7 @@ export class Bar extends PureComponent<Props, State> {
     const { data, isAnimationActive } = this.props;
     const { prevData } = this.state;
 
-    if (isAnimationActive && data && data.length && (!prevData || !_.isEqual(prevData, data))) {
+    if (isAnimationActive && data && data.length && (!prevData || !isEqual(prevData, data))) {
       return this.renderRectanglesWithAnimation();
     }
 
@@ -389,8 +388,8 @@ export class Bar extends PureComponent<Props, State> {
   }
 
   renderBackground() {
-    const { data } = this.props;
-    const backgroundProps = filterProps(this.props.background);
+    const { data, dataKey, activeIndex } = this.props;
+    const backgroundProps = filterProps(this.props.background, false);
 
     return data.map((entry, i) => {
       const { value, background, ...rest } = entry;
@@ -405,12 +404,21 @@ export class Bar extends PureComponent<Props, State> {
         ...background,
         ...backgroundProps,
         ...adaptEventsOfChild(this.props, entry, i),
+        onAnimationStart: this.handleAnimationStart,
+        onAnimationEnd: this.handleAnimationEnd,
+        dataKey,
         index: i,
-        key: `background-bar-${i}`,
         className: 'recharts-bar-background-rectangle',
       };
 
-      return Bar.renderRectangle(this.props.background, props);
+      return (
+        <BarRectangle
+          key={`background-bar-${i}`}
+          option={this.props.background}
+          isActive={i === activeIndex}
+          {...props}
+        />
+      );
     });
   }
 
@@ -428,14 +436,19 @@ export class Bar extends PureComponent<Props, State> {
 
     const offset = layout === 'vertical' ? data[0].height / 2 : data[0].width / 2;
 
-    function dataPointFormatter(dataPoint: BarRectangleItem, dataKey: Props['dataKey']) {
+    const dataPointFormatter: ErrorBarDataPointFormatter = (dataPoint: BarRectangleItem, dataKey) => {
+      /**
+       * if the value coming from `getComposedData` is an array then this is a stacked bar chart.
+       * arr[1] represents end value of the bar since the data is in the form of [startValue, endValue].
+       * */
+      const value = Array.isArray(dataPoint.value) ? dataPoint.value[1] : dataPoint.value;
       return {
         x: dataPoint.x,
         y: dataPoint.y,
-        value: dataPoint.value,
+        value,
         errorVal: getValueByDataKey(dataPoint, dataKey),
       };
-    }
+    };
 
     const errorBarProps = {
       clipPath: needClip ? `url(#clipPath-${clipPathId})` : null,
@@ -443,9 +456,9 @@ export class Bar extends PureComponent<Props, State> {
 
     return (
       <Layer {...errorBarProps}>
-        {errorBarItems.map((item: ReactElement<ErrorBarProps>, i: number) =>
+        {errorBarItems.map((item: ReactElement<ErrorBarProps>) =>
           React.cloneElement(item, {
-            key: `error-bar-${i}`, // eslint-disable-line react/no-array-index-key
+            key: `error-bar-${clipPathId}-${item.props.dataKey}`,
             data,
             xAxis,
             yAxis,
@@ -466,16 +479,23 @@ export class Bar extends PureComponent<Props, State> {
     }
 
     const { isAnimationFinished } = this.state;
-    const layerClass = classNames('recharts-bar', className);
-    const needClip = (xAxis && xAxis.allowDataOverflow) || (yAxis && yAxis.allowDataOverflow);
-    const clipPathId = _.isNil(id) ? this.id : id;
+    const layerClass = clsx('recharts-bar', className);
+    const needClipX = xAxis && xAxis.allowDataOverflow;
+    const needClipY = yAxis && yAxis.allowDataOverflow;
+    const needClip = needClipX || needClipY;
+    const clipPathId = isNil(id) ? this.id : id;
 
     return (
       <Layer className={layerClass}>
-        {needClip ? (
+        {needClipX || needClipY ? (
           <defs>
             <clipPath id={`clipPath-${clipPathId}`}>
-              <rect x={left} y={top} width={width} height={height} />
+              <rect
+                x={needClipX ? left : left - width / 2}
+                y={needClipY ? top : top - height / 2}
+                width={needClipX ? width : width * 2}
+                height={needClipY ? height : height * 2}
+              />
             </clipPath>
           </defs>
         ) : null}

@@ -1,6 +1,10 @@
 import React, { cloneElement, ReactElement, ReactNode, SVGProps } from 'react';
-import _ from 'lodash';
-import { Label, ContentType, Props as LabelProps } from './Label';
+import isNil from 'lodash/isNil';
+import isObject from 'lodash/isObject';
+import isFunction from 'lodash/isFunction';
+import last from 'lodash/last';
+
+import { Label, ContentType, Props as LabelProps, LabelPosition } from './Label';
 import { Layer } from '../container/Layer';
 import { findAllByType, filterProps } from '../util/ReactUtils';
 import { getValueByDataKey } from '../util/ChartUtils';
@@ -17,15 +21,16 @@ interface LabelListProps<T extends Data> {
   data?: Array<T>;
   valueAccessor?: Function;
   clockWise?: boolean;
-  dataKey?: DataKey<T>;
+  dataKey?: DataKey<Record<string, any>>;
   content?: ContentType;
   textBreakAll?: boolean;
-  position?: LabelProps['position'];
+  position?: LabelPosition;
+  offset?: LabelProps['offset'];
   angle?: number;
   formatter?: Function;
 }
 
-export type Props<T extends Data> = SVGProps<SVGElement> & LabelListProps<T>;
+export type Props<T extends Data> = SVGProps<SVGTextElement> & LabelListProps<T>;
 
 export type ImplicitLabelListType<T extends Data> =
   | boolean
@@ -33,12 +38,10 @@ export type ImplicitLabelListType<T extends Data> =
   | ((props: any) => ReactElement<SVGElement>)
   | Props<T>;
 
-const defaultProps = {
-  valueAccessor: (entry: Data) => (_.isArray(entry.value) ? _.last(entry.value) : entry.value),
-};
+const defaultAccessor = (entry: Data) => (Array.isArray(entry.value) ? last(entry.value) : entry.value);
 
-export function LabelList<T extends Data>(props: Props<T>) {
-  const { data, valueAccessor, dataKey, clockWise, id, textBreakAll, ...others } = props;
+export function LabelList<T extends Data>({ valueAccessor = defaultAccessor, ...restProps }: Props<T>) {
+  const { data, dataKey, clockWise, id, textBreakAll, ...others } = restProps;
 
   if (!data || !data.length) {
     return null;
@@ -47,22 +50,20 @@ export function LabelList<T extends Data>(props: Props<T>) {
   return (
     <Layer className="recharts-label-list">
       {data.map((entry, index) => {
-        const value = _.isNil(dataKey)
-          ? valueAccessor(entry, index)
-          : getValueByDataKey(entry && entry.payload, dataKey);
-        const idProps = _.isNil(id) ? {} : { id: `${id}-${index}` };
+        const value = isNil(dataKey) ? valueAccessor(entry, index) : getValueByDataKey(entry && entry.payload, dataKey);
+        const idProps = isNil(id) ? {} : { id: `${id}-${index}` };
 
         return (
           <Label
-            {...(filterProps(entry, true) as any)}
+            {...filterProps(entry, true)}
             {...others}
             {...idProps}
             parentViewBox={entry.parentViewBox}
-            index={index}
             value={value}
             textBreakAll={textBreakAll}
-            viewBox={Label.parseViewBox(_.isNil(clockWise) ? entry : { ...entry, clockWise })}
+            viewBox={Label.parseViewBox(isNil(clockWise) ? entry : { ...entry, clockWise })}
             key={`label-${index}`} // eslint-disable-line react/no-array-index-key
+            index={index}
           />
         );
       })}
@@ -81,11 +82,11 @@ function parseLabelList<T extends Data>(label: unknown, data: Array<T>) {
     return <LabelList key="labelList-implicit" data={data} />;
   }
 
-  if (React.isValidElement(label) || _.isFunction(label)) {
+  if (React.isValidElement(label) || isFunction(label)) {
     return <LabelList key="labelList-implicit" data={data} content={label} />;
   }
 
-  if (_.isObject(label)) {
+  if (isObject(label)) {
     return <LabelList data={data} {...label} key="labelList-implicit" />;
   }
 
@@ -119,4 +120,3 @@ function renderCallByParent<T extends Data>(
 }
 
 LabelList.renderCallByParent = renderCallByParent;
-LabelList.defaultProps = defaultProps;
